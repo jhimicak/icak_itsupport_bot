@@ -26,7 +26,8 @@ FAQ_DATA = {
     '현경': '켠경은 연쥐꺼',
 }
 
-ADMIN_KEYWORDS = ['상담원', '관리자', '직원', '사람', '담당자']
+# ADMIN_KEYWORDS = ['상담원', '관리자', '직원', '사람', '담당자']
+ADMIN_KEYWORDS = ['상담원']
 
 # 저장소 (실 운영시 Redis/DB 권장)
 user_sessions = {}
