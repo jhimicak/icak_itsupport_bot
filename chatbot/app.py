@@ -82,4 +82,7 @@ def telegram_webhook():
     return jsonify({'status': 'ok'})
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    # Render가 주는 PORT 환경변수를 읽고, 없으면 5000을 사용
+    port = int(os.environ.get("PORT", 5000))
+    # 0.0.0.0으로 설정해야 외부(Render의 로드밸런서)에서 접속 가능합니다.
+    app.run(host='0.0.0.0', port=port)
