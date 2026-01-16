@@ -6,16 +6,20 @@ from datetime import datetime, timedelta
 import uuid
 import re
 import json
-from pathlib import Path
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 
 app = Flask(__name__)
-app.secret_key = os.environ.get('SECRET_KEY', 'icak34061137')
+app.secret_key = os.environ.get('SECRET_KEY', 'your-secret-key-change-this')
 CORS(app)
 
 # 환경 변수 설정
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
 ADMIN_CHAT_ID = os.environ.get('ADMIN_CHAT_ID')
 TELEGRAM_API_URL = f'https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}'
+
+# Google Sheets 설정
+GOOGLE_SHEET_ID = os.environ.get('GOOGLE_SHEET_ID')
 
 # FAQ 데이터 및 설정
 FAQ_DATA = {
@@ -34,70 +38,188 @@ SESSION_TIMEOUT_MINUTES = 10  # 세션 타임아웃 (분)
 # 저장소
 user_sessions = {}
 admin_responses = {}
-active_consultations = {}  # {user_id: {'start_time': datetime, 'last_activity': datetime}}
+active_consultations = {}
 
-# 대화 기록 저장 디렉토리
-CHAT_HISTORY_DIR = Path('chat_history')
-CHAT_HISTORY_DIR.mkdir(exist_ok=True)
+# Google Sheets 클라이언트 초기화
+google_sheets_client = None
 
-# --- 대화 기록 저장 함수 ---
+def init_google_sheets():
+    """Google Sheets API 초기화"""
+    global google_sheets_client
+    
+    try:
+        # 환경 변수에서 인증 정보 가져오기
+        creds_json = os.environ.get('GOOGLE_SHEETS_CREDENTIALS')
+        
+        if not creds_json:
+            print("⚠️ GOOGLE_SHEETS_CREDENTIALS 환경 변수가 없습니다.")
+            return None
+        
+        # JSON 파싱
+        creds_dict = json.loads(creds_json)
+        
+        # 인증 범위 설정
+        scope = [
+            'https://spreadsheets.google.com/feeds',
+            'https://www.googleapis.com/auth/drive'
+        ]
+        
+        # 인증 정보로 클라이언트 생성
+        credentials = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        google_sheets_client = gspread.authorize(credentials)
+        
+        print("✅ Google Sheets 연결 성공!")
+        return google_sheets_client
+        
+    except Exception as e:
+        print(f"❌ Google Sheets 초기화 실패: {e}")
+        return None
 
-def save_chat_message(user_id, message_type, message_content, sender='user'):
-    """대화 내용을 JSON 파일에 저장"""
-    chat_file = CHAT_HISTORY_DIR / f'{user_id}.json'
-    
-    # 기존 대화 기록 로드
-    if chat_file.exists():
-        with open(chat_file, 'r', encoding='utf-8') as f:
-            chat_data = json.load(f)
-    else:
-        chat_data = {
-            'user_id': user_id,
-            'created_at': datetime.now().isoformat(),
-            'conversations': []
-        }
-    
-    # 새 메시지 추가
-    chat_data['conversations'].append({
-        'timestamp': datetime.now().isoformat(),
-        'sender': sender,  # 'user' or 'bot' or 'admin'
-        'type': message_type,  # 'faq', 'admin_request', 'consultation', 'default'
-        'message': message_content
-    })
-    
-    # 파일에 저장
-    with open(chat_file, 'w', encoding='utf-8') as f:
-        json.dump(chat_data, f, ensure_ascii=False, indent=2)
+# 앱 시작 시 Google Sheets 초기화
+init_google_sheets()
 
-def export_chat_to_txt(user_id):
-    """JSON 대화 기록을 TXT 파일로도 변환"""
-    chat_file = CHAT_HISTORY_DIR / f'{user_id}.json'
+# --- Google Sheets 저장 함수 ---
+
+def get_or_create_sheet(user_id):
+    """사용자별 시트 가져오기 또는 생성"""
+    if not google_sheets_client or not GOOGLE_SHEET_ID:
+        return None
     
-    if not chat_file.exists():
+    try:
+        spreadsheet = google_sheets_client.open_by_key(GOOGLE_SHEET_ID)
+        
+        # 시트 이름 (사용자 ID)
+        sheet_name = f"User_{user_id}"
+        
+        try:
+            # 기존 시트 가져오기
+            worksheet = spreadsheet.worksheet(sheet_name)
+        except gspread.exceptions.WorksheetNotFound:
+            # 시트가 없으면 새로 생성
+            worksheet = spreadsheet.add_worksheet(title=sheet_name, rows=1000, cols=10)
+            
+            # 헤더 추가
+            worksheet.append_row([
+                '타임스탬프',
+                '날짜',
+                '시간',
+                '발신자',
+                '메시지 타입',
+                '메시지 내용',
+                '세션 ID'
+            ])
+            
+            # 헤더 서식 설정
+            worksheet.format('A1:G1', {
+                'textFormat': {'bold': True},
+                'backgroundColor': {'red': 0.4, 'green': 0.5, 'blue': 0.9}
+            })
+        
+        return worksheet
+        
+    except Exception as e:
+        print(f"❌ 시트 가져오기 실패: {e}")
+        return None
+
+def save_to_google_sheets(user_id, message_type, message_content, sender='user'):
+    """Google Sheets에 대화 내용 저장"""
+    worksheet = get_or_create_sheet(user_id)
+    
+    if not worksheet:
+        print("⚠️ Google Sheets에 저장 실패 (워크시트 없음)")
+        return False
+    
+    try:
+        now = datetime.now()
+        timestamp = now.isoformat()
+        date_str = now.strftime('%Y-%m-%d')
+        time_str = now.strftime('%H:%M:%S')
+        
+        # 세션 ID (현재 활성 세션이 있으면 세션 시작 시간 사용)
+        session_id = ""
+        if user_id in active_consultations:
+            session_id = active_consultations[user_id]['start_time'].strftime('%Y%m%d_%H%M%S')
+        
+        # 발신자 이름 변환
+        sender_name = {
+            'user': '사용자',
+            'bot': '챗봇',
+            'admin': '상담원',
+            'system': '시스템'
+        }.get(sender, sender)
+        
+        # 행 추가
+        worksheet.append_row([
+            timestamp,
+            date_str,
+            time_str,
+            sender_name,
+            message_type,
+            message_content,
+            session_id
+        ])
+        
+        print(f"✅ Google Sheets에 저장 완료: {user_id}")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Google Sheets 저장 실패: {e}")
+        return False
+
+def save_session_summary(user_id, start_time, end_time, reason):
+    """상담 세션 요약 저장 (별도 시트)"""
+    if not google_sheets_client or not GOOGLE_SHEET_ID:
         return
     
-    with open(chat_file, 'r', encoding='utf-8') as f:
-        chat_data = json.load(f)
-    
-    txt_file = CHAT_HISTORY_DIR / f'{user_id}.txt'
-    with open(txt_file, 'w', encoding='utf-8') as f:
-        f.write(f"=== 대화 기록 ===\n")
-        f.write(f"사용자 ID: {user_id}\n")
-        f.write(f"생성일: {chat_data['created_at']}\n")
-        f.write(f"{'='*50}\n\n")
+    try:
+        spreadsheet = google_sheets_client.open_by_key(GOOGLE_SHEET_ID)
         
-        for conv in chat_data['conversations']:
-            timestamp = conv['timestamp']
-            sender = conv['sender']
-            message = conv['message']
-            
-            sender_name = {
-                'user': '사용자',
-                'bot': '챗봇',
-                'admin': '상담원'
-            }.get(sender, sender)
-            
-            f.write(f"[{timestamp}] {sender_name}:\n{message}\n\n")
+        # 세션 요약 시트
+        try:
+            summary_sheet = spreadsheet.worksheet("SessionSummary")
+        except gspread.exceptions.WorksheetNotFound:
+            summary_sheet = spreadsheet.add_worksheet(title="SessionSummary", rows=1000, cols=8)
+            summary_sheet.append_row([
+                '사용자 ID',
+                '세션 시작',
+                '세션 종료',
+                '지속 시간 (초)',
+                '종료 사유',
+                '날짜',
+                '시작 시간',
+                '종료 시간'
+            ])
+            summary_sheet.format('A1:H1', {
+                'textFormat': {'bold': True},
+                'backgroundColor': {'red': 0.9, 'green': 0.6, 'blue': 0.4}
+            })
+        
+        duration = (end_time - start_time).total_seconds()
+        date_str = start_time.strftime('%Y-%m-%d')
+        start_time_str = start_time.strftime('%H:%M:%S')
+        end_time_str = end_time.strftime('%H:%M:%S')
+        
+        reason_text = {
+            'manual': '사용자 요청',
+            'timeout': '타임아웃',
+            'admin': '관리자 종료'
+        }.get(reason, reason)
+        
+        summary_sheet.append_row([
+            user_id,
+            start_time.isoformat(),
+            end_time.isoformat(),
+            int(duration),
+            reason_text,
+            date_str,
+            start_time_str,
+            end_time_str
+        ])
+        
+        print(f"✅ 세션 요약 저장 완료: {user_id}")
+        
+    except Exception as e:
+        print(f"❌ 세션 요약 저장 실패: {e}")
 
 # --- 상담 세션 관리 함수 ---
 
@@ -107,7 +229,7 @@ def start_consultation_session(user_id):
         'start_time': datetime.now(),
         'last_activity': datetime.now()
     }
-    save_chat_message(user_id, 'system', '상담 세션 시작', 'system')
+    save_to_google_sheets(user_id, 'system', '상담 세션 시작', 'system')
 
 def update_session_activity(user_id):
     """세션 활동 시간 업데이트"""
@@ -132,13 +254,15 @@ def end_consultation_session(user_id, reason='manual'):
     """상담 세션 종료"""
     if user_id in active_consultations:
         session_info = active_consultations[user_id]
-        duration = datetime.now() - session_info['start_time']
+        start_time = session_info['start_time']
+        end_time = datetime.now()
+        duration = end_time - start_time
         
-        end_message = f"상담 세션 종료 (사유: {reason}, 지속시간: {duration})"
-        save_chat_message(user_id, 'system', end_message, 'system')
+        end_message = f"상담 세션 종료 (사유: {reason}, 지속시간: {str(duration).split('.')[0]})"
+        save_to_google_sheets(user_id, 'system', end_message, 'system')
         
-        # TXT 파일로도 내보내기
-        export_chat_to_txt(user_id)
+        # 세션 요약 저장
+        save_session_summary(user_id, start_time, end_time, reason)
         
         del active_consultations[user_id]
         
@@ -226,14 +350,14 @@ def chat():
         return jsonify({'error': '메시지를 입력해주세요'}), 400
 
     # 사용자 메시지 저장
-    save_chat_message(user_id, 'user_message', user_message, 'user')
+    save_to_google_sheets(user_id, 'user_message', user_message, 'user')
 
     # 1. 상담 종료 체크
     if user_message in ['상담종료', '상담 종료', '종료']:
         if is_session_active(user_id):
             end_consultation_session(user_id, 'manual')
             response_text = '상담이 종료되었습니다. 이용해주셔서 감사합니다.\n\n다시 상담을 원하시면 "상담원"을 입력해주세요.'
-            save_chat_message(user_id, 'system', response_text, 'bot')
+            save_to_google_sheets(user_id, 'system', response_text, 'bot')
             return jsonify({
                 'type': 'session_end',
                 'message': response_text,
@@ -241,7 +365,7 @@ def chat():
             })
         else:
             response_text = '활성화된 상담 세션이 없습니다.'
-            save_chat_message(user_id, 'default', response_text, 'bot')
+            save_to_google_sheets(user_id, 'default', response_text, 'bot')
             return jsonify({
                 'type': 'error',
                 'message': response_text,
@@ -253,12 +377,21 @@ def chat():
         update_session_activity(user_id)
         notify_admin_message(user_id, user_message)
         
-        response_text = '메시지가 상담원에게 전달되었습니다. 답변을 기다려주세요...'
-        save_chat_message(user_id, 'consultation', user_message, 'user')
+        # response_text = '메시지가 상담원에게 전달되었습니다. 답변을 기다려주세요...'
+        # save_to_google_sheets(user_id, 'consultation', user_message, 'user')
+        
+        # return jsonify({
+        #     'type': 'consultation_active',
+        #     'message': response_text,
+        #     'timestamp': datetime.now().isoformat()
+
+        # 안내 문구를 보내지 않기 위해 메시지를 빈 값으로 설정하거나 
+        # 클라이언트에서 무시할 특정 타입을 보냅니다.
+        save_to_google_sheets(user_id, 'consultation', user_message, 'user')
         
         return jsonify({
             'type': 'consultation_active',
-            'message': response_text,
+            'message': '', # 메시지를 비워서 보냄
             'timestamp': datetime.now().isoformat()
         })
 
@@ -273,7 +406,7 @@ def chat():
             '상담을 종료하시려면 "상담종료"를 입력해주세요.\n\n'
             f'(세션은 {SESSION_TIMEOUT_MINUTES}분간 유지됩니다)'
         )
-        save_chat_message(user_id, 'admin_request', response_text, 'bot')
+        save_to_google_sheets(user_id, 'admin_request', response_text, 'bot')
         
         return jsonify({
             'type': 'session_start',
@@ -284,7 +417,7 @@ def chat():
     # 4. FAQ 자동 응답
     faq_answer = find_faq_answer(user_message)
     if faq_answer:
-        save_chat_message(user_id, 'faq', faq_answer, 'bot')
+        save_to_google_sheets(user_id, 'faq', faq_answer, 'bot')
         return jsonify({
             'type': 'faq',
             'message': faq_answer,
@@ -297,7 +430,7 @@ def chat():
         "도움말 키워드: 영업시간, 위치, 연락처, 이메일\n\n"
         "직원과 대화를 원하시면 '상담원'이라고 입력해주세요."
     )
-    save_chat_message(user_id, 'default', response_text, 'bot')
+    save_to_google_sheets(user_id, 'default', response_text, 'bot')
     
     return jsonify({
         'type': 'default',
@@ -314,7 +447,7 @@ def check_reply():
         reply = admin_responses[user_id].pop(0)
         
         # 관리자 답변 저장
-        save_chat_message(user_id, 'consultation', reply, 'admin')
+        save_to_google_sheets(user_id, 'consultation', reply, 'admin')
         
         # 세션 활동 업데이트
         if is_session_active(user_id):
@@ -356,13 +489,14 @@ def telegram_webhook():
 
 @app.route('/api/session_status', methods=['GET'])
 def session_status():
-    """현재 세션 상태 확인 (디버깅용)"""
+    """현재 세션 상태 확인"""
     user_id = session.get('user_id')
     is_active = is_session_active(user_id)
     
     status = {
         'user_id': user_id,
-        'session_active': is_active
+        'session_active': is_active,
+        'google_sheets_connected': google_sheets_client is not None
     }
     
     if is_active:

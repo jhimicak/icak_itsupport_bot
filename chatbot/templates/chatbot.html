@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>해외건설협회 정보화지원실 고객문의</title>
+    <title>해외건설협회 챗봇</title>
     <style>
         * {
             margin: 0;
@@ -242,7 +242,7 @@
 <body>
     <div class="chat-container">
         <div class="chat-header">
-            💬 고객 상담 챗봇
+            💬 해외건설협회 상담 챗봇
             <div class="session-indicator" id="sessionIndicator">● 상담원 연결 중</div>
         </div>
         
@@ -383,7 +383,7 @@
                     });
                     
                     messageDiv.innerHTML = `
-                        <div class="message-content" style="background: linear-gradient(135deg, #4ade80 0%, #22c55e 100%); color: white;">
+                        <div class="message-content" style="background: linear-gradient(135deg, #4ade80 0%, #22c55e 100%); color: white; width: fit-content">
                             <strong>👤 상담원:</strong><br>${data.message.trim()}
                         </div>
                         <div class="timestamp">${timeString}</div>
