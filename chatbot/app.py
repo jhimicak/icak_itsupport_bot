@@ -8,6 +8,7 @@ import re
 import json
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
+from datetime import datetime, timedelta, timezone
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'your-secret-key-change-this')
@@ -130,7 +131,7 @@ def save_to_google_sheets(user_id, message_type, message_content, sender='user')
         return False
     
     try:
-        now = datetime.now()
+        now = kst_now()
         timestamp = now.isoformat()
         date_str = now.strftime('%Y-%m-%d')
         time_str = now.strftime('%H:%M:%S')
@@ -226,15 +227,15 @@ def save_session_summary(user_id, start_time, end_time, reason):
 def start_consultation_session(user_id):
     """상담 세션 시작"""
     active_consultations[user_id] = {
-        'start_time': datetime.now(),
-        'last_activity': datetime.now()
+        'start_time': kst_now(),
+        'last_activity': kst_now()
     }
     save_to_google_sheets(user_id, 'system', '상담 세션 시작', 'system')
 
 def update_session_activity(user_id):
     """세션 활동 시간 업데이트"""
     if user_id in active_consultations:
-        active_consultations[user_id]['last_activity'] = datetime.now()
+        active_consultations[user_id]['last_activity'] = kst_now()
 
 def is_session_active(user_id):
     """세션이 활성화되어 있는지 확인"""
@@ -244,7 +245,7 @@ def is_session_active(user_id):
     last_activity = active_consultations[user_id]['last_activity']
     timeout = timedelta(minutes=SESSION_TIMEOUT_MINUTES)
     
-    if datetime.now() - last_activity > timeout:
+    if kst_now() - last_activity > timeout:
         end_consultation_session(user_id, 'timeout')
         return False
     
@@ -255,7 +256,7 @@ def end_consultation_session(user_id, reason='manual'):
     if user_id in active_consultations:
         session_info = active_consultations[user_id]
         start_time = session_info['start_time']
-        end_time = datetime.now()
+        end_time = kst_now()
         duration = end_time - start_time
         
         end_message = f"상담 세션 종료 (사유: {reason}, 지속시간: {str(duration).split('.')[0]})"
@@ -282,11 +283,14 @@ def notify_admin_session_end(user_id, reason, duration):
         f"USER_ID: [{user_id}]\n"
         f"종료 사유: {reason_text}\n"
         f"상담 시간: {str(duration).split('.')[0]}\n"
-        f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        f"⏰ {kst_now().strftime('%Y-%m-%d %H:%M:%S')}"
     )
     send_telegram_message(ADMIN_CHAT_ID, message)
 
 # --- 텔레그램 헬퍼 함수 ---
+
+def kst_now():
+    return datetime.now(timezone.utc) + timedelta(hours=9)
 
 def send_telegram_message(chat_id, text):
     """텔레그램 메시지 발송"""
@@ -301,7 +305,7 @@ def send_telegram_message(chat_id, text):
 
 def notify_admin(user_id, user_message):
     """관리자에게 상담 요청 알림"""
-    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    timestamp = kst_now().strftime('%Y-%m-%d %H:%M:%S')
     message = (
         f"🔔 <b>새 상담 요청</b>\n\n"
         f"USER_ID: [{user_id}]\n"
@@ -318,7 +322,7 @@ def notify_admin_message(user_id, user_message):
     message = (
         f"💬 <b>USER_ID: [{user_id}]</b>\n\n"
         f"{user_message}\n\n"
-        f"⏰ {datetime.now().strftime('%H:%M:%S')}"
+        f"⏰ {kst_now().strftime('%H:%M:%S')}"
     )
     return send_telegram_message(ADMIN_CHAT_ID, message)
 
@@ -361,7 +365,7 @@ def chat():
             return jsonify({
                 'type': 'session_end',
                 'message': response_text,
-                'timestamp': datetime.now().isoformat()
+                'timestamp': kst_now().isoformat()
             })
         else:
             response_text = '활성화된 상담 세션이 없습니다.'
@@ -369,7 +373,7 @@ def chat():
             return jsonify({
                 'type': 'error',
                 'message': response_text,
-                'timestamp': datetime.now().isoformat()
+                'timestamp': kst_now().isoformat()
             })
 
     # 2. 활성 상담 세션이 있는 경우 - 모든 메시지를 관리자에게 전달
@@ -383,7 +387,7 @@ def chat():
         # return jsonify({
         #     'type': 'consultation_active',
         #     'message': response_text,
-        #     'timestamp': datetime.now().isoformat()
+        #     'timestamp': kst_now().isoformat()
 
         # 안내 문구를 보내지 않기 위해 메시지를 빈 값으로 설정하거나 
         # 클라이언트에서 무시할 특정 타입을 보냅니다.
@@ -392,7 +396,7 @@ def chat():
         return jsonify({
             'type': 'consultation_active',
             'message': '', # 메시지를 비워서 보냄
-            'timestamp': datetime.now().isoformat()
+            'timestamp': kst_now().isoformat()
         })
 
     # 3. 상담원 연결 요청
@@ -411,7 +415,7 @@ def chat():
         return jsonify({
             'type': 'session_start',
             'message': response_text,
-            'timestamp': datetime.now().isoformat()
+            'timestamp': kst_now().isoformat()
         })
 
     # 4. FAQ 자동 응답
@@ -421,7 +425,7 @@ def chat():
         return jsonify({
             'type': 'faq',
             'message': faq_answer,
-            'timestamp': datetime.now().isoformat()
+            'timestamp': kst_now().isoformat()
         })
 
     # 5. 기본 응답
@@ -435,7 +439,7 @@ def chat():
     return jsonify({
         'type': 'default',
         'message': response_text,
-        'timestamp': datetime.now().isoformat()
+        'timestamp': kst_now().isoformat()
     })
 
 @app.route('/api/check_reply', methods=['GET'])
