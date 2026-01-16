@@ -40,6 +40,7 @@ SESSION_TIMEOUT_MINUTES = 10  # 세션 타임아웃 (분)
 user_sessions = {}
 admin_responses = {}
 active_consultations = {}
+topic_ids = {} # {user_id: message_thread_id}
 
 # Google Sheets 클라이언트 초기화
 google_sheets_client = None
@@ -303,28 +304,49 @@ def send_telegram_message(chat_id, text):
         print(f"텔레그램 전송 에러: {e}")
         return None
 
+# --- notify_admin(새 상담 요청) 수정 ---
 def notify_admin(user_id, user_message):
-    """관리자에게 상담 요청 알림"""
+    """새 상담 요청 시 Topic을 생성하고 알림"""
+    thread_id = create_telegram_topic(user_id)
     timestamp = kst_now().strftime('%Y-%m-%d %H:%M:%S')
+    
     message = (
-        f"🔔 <b>새 상담 요청</b>\n\n"
-        f"USER_ID: [{user_id}]\n"
-        f"💬 첫 메시지: {user_message}\n"
-        f"⏰ {timestamp}\n\n"
-        f"<b>상담 세션이 시작되었습니다.</b>\n"
-        f"이 메시지에 답장하여 대화하세요.\n"
-        f"세션은 {SESSION_TIMEOUT_MINUTES}분간 유지됩니다."
+        f"🔔 <b>새 상담 요청</b>\n"
+        f"━━━━━━━━━━━━━━\n"
+        f"💬 내용: {user_message}\n"
+        f"⏰ 시간: {timestamp}\n"
+        f"━━━━━━━━━━━━━━\n"
+        f"<b>이곳에서 대화를 시작하세요.</b>"
     )
-    return send_telegram_message(ADMIN_CHAT_ID, message)
+    
+    url = f'{TELEGRAM_API_URL}/sendMessage'
+    data = {
+        'chat_id': ADMIN_CHAT_ID,
+        'text': message,
+        'parse_mode': 'HTML',
+        'message_thread_id': thread_id
+    }
+    return requests.post(url, json=data)
 
 def notify_admin_message(user_id, user_message):
-    """진행 중인 상담의 사용자 메시지를 관리자에게 전달"""
+    """특정 유저의 Topic 방으로 메시지 전송"""
+    thread_id = create_telegram_topic(user_id) # 해당 유저의 방 ID를 가져옴
+    
     message = (
-        f"💬 <b>USER_ID: [{user_id}]</b>\n\n"
+        f"👤 <b>유저 메시지</b>\n\n"
         f"{user_message}\n\n"
-        f"⏰ {kst_now().strftime('%H:%M:%S')}"
+        f"⏰ {kst_now().strftime('%H:%M:%S')}\n"
+        f"ID: [{user_id}]" # 답장을 위해 ID 정보는 하단에 포함
     )
-    return send_telegram_message(ADMIN_CHAT_ID, message)
+    
+    url = f'{TELEGRAM_API_URL}/sendMessage'
+    data = {
+        'chat_id': ADMIN_CHAT_ID,
+        'text': message,
+        'parse_mode': 'HTML',
+        'message_thread_id': thread_id # 이 값이 있어야 해당 방으로 배달됨
+    }
+    return requests.post(url, json=data)
 
 def find_faq_answer(message):
     """FAQ 데이터에서 키워드 매칭"""
@@ -333,6 +355,31 @@ def find_faq_answer(message):
         if keyword in message_lower:
             return answer
     return None
+
+# --- 텔레그램 주제(Topic) 생성 함수 추가 ---
+def create_telegram_topic(user_id):
+    """텔레그램 그룹 내에 유저 전용 주제(Topic) 생성"""
+    if user_id in topic_ids:
+        return topic_ids[user_id]
+
+    url = f'{TELEGRAM_API_URL}/createForumTopic'
+    payload = {
+        'chat_id': ADMIN_CHAT_ID,
+        'name': f"상담: {user_id}"
+    }
+    
+    try:
+        response = requests.post(url, json=payload).json()
+        if response.get('ok'):
+            thread_id = response['result']['message_thread_id']
+            topic_ids[user_id] = thread_id
+            return thread_id
+        else:
+            print(f"Topic 생성 실패: {response}")
+            return None
+    except Exception as e:
+        print(f"Topic 생성 에러: {e}")
+        return None
 
 # --- 라우트 (API) ---
 
@@ -461,35 +508,44 @@ def check_reply():
     
     return jsonify({'has_reply': False})
 
+# --- webhook 수정 (관리자 답장 처리) ---
 @app.route('/api/webhook', methods=['POST'])
 def telegram_webhook():
-    """텔레그램 서버로부터 오는 알림 처리"""
     data = request.json
     
-    # 관리자가 특정 메시지에 '답장'을 한 경우
-    if 'message' in data and 'reply_to_message' in data['message']:
-        admin_text = data['message'].get('text')
-        original_text = data['message']['reply_to_message'].get('text', '')
+    # 텔레그램 주제(Topic) 내에서 온 메시지 처리
+    if 'message' in data:
+        msg = data['message']
+        admin_text = msg.get('text')
+        thread_id = msg.get('message_thread_id')
         
-        # 원본 메시지에서 USER_ID 추출
-        match = re.search(r'USER_ID: \[(.*?)\]', original_text)
-        if match:
-            target_user_id = match.group(1)
-            
-            # 세션이 활성화되어 있는지 확인
+        # Topic ID를 통해 어떤 user_id인지 역추적
+        target_user_id = next((uid for uid, tid in topic_ids.items() if tid == thread_id), None)
+        
+        if target_user_id and admin_text:
+            # 봇 자신이 보낸 메시지는 무시
+            if msg.get('from', {}).get('is_bot'):
+                return jsonify({'status': 'ok'})
+
             if is_session_active(target_user_id):
                 if target_user_id not in admin_responses:
                     admin_responses[target_user_id] = []
                 admin_responses[target_user_id].append(admin_text)
                 update_session_activity(target_user_id)
             else:
-                # 세션이 종료된 경우 관리자에게 알림
-                send_telegram_message(
-                    ADMIN_CHAT_ID,
-                    f"⚠️ USER_ID [{target_user_id}]의 상담 세션이 종료되었습니다."
-                )
+                send_telegram_message_to_topic(thread_id, f"⚠️ 세션이 종료된 유저입니다.")
     
     return jsonify({'status': 'ok'})
+
+# 주제 전용 메시지 발송 헬퍼
+def send_telegram_message_to_topic(thread_id, text):
+    url = f'{TELEGRAM_API_URL}/sendMessage'
+    data = {
+        'chat_id': ADMIN_CHAT_ID, 
+        'text': text, 
+        'message_thread_id': thread_id
+    }
+    requests.post(url, json=data)
 
 @app.route('/api/session_status', methods=['GET'])
 def session_status():
