@@ -2,13 +2,14 @@ from flask import Flask, render_template, request, jsonify, session
 from flask_cors import CORS
 import requests
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import uuid
 import re
 import json
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-from datetime import datetime, timedelta, timezone
+import base64
+from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'your-secret-key-change-this')
@@ -22,6 +23,12 @@ TELEGRAM_API_URL = f'https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}'
 # Google Sheets 설정
 GOOGLE_SHEET_ID = os.environ.get('GOOGLE_SHEET_ID')
 
+# 파일 업로드 설정
+UPLOAD_FOLDER = '/tmp/uploads'  # Render에서는 /tmp 사용
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'mp4', 'mov', 'avi'}
+MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
+
 # FAQ 데이터 및 설정
 FAQ_DATA = {
     '영업시간': '평일 09:00 - 18:00 (주말 및 공휴일 휴무)',
@@ -34,12 +41,14 @@ FAQ_DATA = {
 }
 
 ADMIN_KEYWORDS = ['상담원']
-SESSION_TIMEOUT_MINUTES = 10  # 세션 타임아웃 (분)
+SESSION_TIMEOUT_MINUTES = 10
 
 # 저장소
 user_sessions = {}
 admin_responses = {}
 active_consultations = {}
+topic_ids = {}
+greeted_users = set()  # 인사 메시지를 보낸 사용자 추적
 
 # Google Sheets 클라이언트 초기화
 google_sheets_client = None
@@ -49,23 +58,18 @@ def init_google_sheets():
     global google_sheets_client
     
     try:
-        # 환경 변수에서 인증 정보 가져오기
         creds_json = os.environ.get('GOOGLE_SHEETS_CREDENTIALS')
         
         if not creds_json:
             print("⚠️ GOOGLE_SHEETS_CREDENTIALS 환경 변수가 없습니다.")
             return None
         
-        # JSON 파싱
         creds_dict = json.loads(creds_json)
-        
-        # 인증 범위 설정
         scope = [
             'https://spreadsheets.google.com/feeds',
             'https://www.googleapis.com/auth/drive'
         ]
         
-        # 인증 정보로 클라이언트 생성
         credentials = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         google_sheets_client = gspread.authorize(credentials)
         
@@ -76,8 +80,23 @@ def init_google_sheets():
         print(f"❌ Google Sheets 초기화 실패: {e}")
         return None
 
-# 앱 시작 시 Google Sheets 초기화
 init_google_sheets()
+
+# --- 파일 처리 함수 ---
+
+def allowed_file(filename):
+    """허용된 파일 확장자인지 확인"""
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+def is_image(filename):
+    """이미지 파일인지 확인"""
+    ext = filename.rsplit('.', 1)[1].lower()
+    return ext in {'png', 'jpg', 'jpeg', 'gif'}
+
+def is_video(filename):
+    """비디오 파일인지 확인"""
+    ext = filename.rsplit('.', 1)[1].lower()
+    return ext in {'mp4', 'mov', 'avi'}
 
 # --- Google Sheets 저장 함수 ---
 
@@ -88,29 +107,16 @@ def get_or_create_sheet(user_id):
     
     try:
         spreadsheet = google_sheets_client.open_by_key(GOOGLE_SHEET_ID)
-        
-        # 시트 이름 (사용자 ID)
         sheet_name = f"User_{user_id}"
         
         try:
-            # 기존 시트 가져오기
             worksheet = spreadsheet.worksheet(sheet_name)
         except gspread.exceptions.WorksheetNotFound:
-            # 시트가 없으면 새로 생성
             worksheet = spreadsheet.add_worksheet(title=sheet_name, rows=1000, cols=10)
-            
-            # 헤더 추가
             worksheet.append_row([
-                '타임스탬프',
-                '날짜',
-                '시간',
-                '발신자',
-                '메시지 타입',
-                '메시지 내용',
-                '세션 ID'
+                '타임스탬프', '날짜', '시간', '발신자', 
+                '메시지 타입', '메시지 내용', '세션 ID'
             ])
-            
-            # 헤더 서식 설정
             worksheet.format('A1:G1', {
                 'textFormat': {'bold': True},
                 'backgroundColor': {'red': 0.4, 'green': 0.5, 'blue': 0.9}
@@ -127,7 +133,7 @@ def save_to_google_sheets(user_id, message_type, message_content, sender='user')
     worksheet = get_or_create_sheet(user_id)
     
     if not worksheet:
-        print("⚠️ Google Sheets에 저장 실패 (워크시트 없음)")
+        print("⚠️ Google Sheets에 저장 실패")
         return False
     
     try:
@@ -136,12 +142,10 @@ def save_to_google_sheets(user_id, message_type, message_content, sender='user')
         date_str = now.strftime('%Y-%m-%d')
         time_str = now.strftime('%H:%M:%S')
         
-        # 세션 ID (현재 활성 세션이 있으면 세션 시작 시간 사용)
         session_id = ""
         if user_id in active_consultations:
             session_id = active_consultations[user_id]['start_time'].strftime('%Y%m%d_%H%M%S')
         
-        # 발신자 이름 변환
         sender_name = {
             'user': '사용자',
             'bot': '챗봇',
@@ -149,15 +153,9 @@ def save_to_google_sheets(user_id, message_type, message_content, sender='user')
             'system': '시스템'
         }.get(sender, sender)
         
-        # 행 추가
         worksheet.append_row([
-            timestamp,
-            date_str,
-            time_str,
-            sender_name,
-            message_type,
-            message_content,
-            session_id
+            timestamp, date_str, time_str,
+            sender_name, message_type, message_content, session_id
         ])
         
         print(f"✅ Google Sheets에 저장 완료: {user_id}")
@@ -168,27 +166,20 @@ def save_to_google_sheets(user_id, message_type, message_content, sender='user')
         return False
 
 def save_session_summary(user_id, start_time, end_time, reason):
-    """상담 세션 요약 저장 (별도 시트)"""
+    """상담 세션 요약 저장"""
     if not google_sheets_client or not GOOGLE_SHEET_ID:
         return
     
     try:
         spreadsheet = google_sheets_client.open_by_key(GOOGLE_SHEET_ID)
         
-        # 세션 요약 시트
         try:
             summary_sheet = spreadsheet.worksheet("SessionSummary")
         except gspread.exceptions.WorksheetNotFound:
             summary_sheet = spreadsheet.add_worksheet(title="SessionSummary", rows=1000, cols=8)
             summary_sheet.append_row([
-                '사용자 ID',
-                '세션 시작',
-                '세션 종료',
-                '지속 시간 (초)',
-                '종료 사유',
-                '날짜',
-                '시작 시간',
-                '종료 시간'
+                '사용자 ID', '세션 시작', '세션 종료', '지속 시간 (초)',
+                '종료 사유', '날짜', '시작 시간', '종료 시간'
             ])
             summary_sheet.format('A1:H1', {
                 'textFormat': {'bold': True},
@@ -207,14 +198,8 @@ def save_session_summary(user_id, start_time, end_time, reason):
         }.get(reason, reason)
         
         summary_sheet.append_row([
-            user_id,
-            start_time.isoformat(),
-            end_time.isoformat(),
-            int(duration),
-            reason_text,
-            date_str,
-            start_time_str,
-            end_time_str
+            user_id, start_time.isoformat(), end_time.isoformat(),
+            int(duration), reason_text, date_str, start_time_str, end_time_str
         ])
         
         print(f"✅ 세션 요약 저장 완료: {user_id}")
@@ -223,6 +208,9 @@ def save_session_summary(user_id, start_time, end_time, reason):
         print(f"❌ 세션 요약 저장 실패: {e}")
 
 # --- 상담 세션 관리 함수 ---
+
+def kst_now():
+    return datetime.now(timezone.utc) + timedelta(hours=9)
 
 def start_consultation_session(user_id):
     """상담 세션 시작"""
@@ -261,13 +249,9 @@ def end_consultation_session(user_id, reason='manual'):
         
         end_message = f"상담 세션 종료 (사유: {reason}, 지속시간: {str(duration).split('.')[0]})"
         save_to_google_sheets(user_id, 'system', end_message, 'system')
-        
-        # 세션 요약 저장
         save_session_summary(user_id, start_time, end_time, reason)
         
         del active_consultations[user_id]
-        
-        # 관리자에게 알림
         notify_admin_session_end(user_id, reason, duration)
 
 def notify_admin_session_end(user_id, reason, duration):
@@ -287,15 +271,15 @@ def notify_admin_session_end(user_id, reason, duration):
     )
     send_telegram_message(ADMIN_CHAT_ID, message)
 
-# --- 텔레그램 헬퍼 함수 ---
+# --- 텔레그램 함수 ---
 
-def kst_now():
-    return datetime.now(timezone.utc) + timedelta(hours=9)
-
-def send_telegram_message(chat_id, text):
+def send_telegram_message(chat_id, text, thread_id=None):
     """텔레그램 메시지 발송"""
     url = f'{TELEGRAM_API_URL}/sendMessage'
     data = {'chat_id': chat_id, 'text': text, 'parse_mode': 'HTML'}
+    if thread_id:
+        data['message_thread_id'] = thread_id
+    
     try:
         response = requests.post(url, json=data)
         return response.json()
@@ -303,28 +287,106 @@ def send_telegram_message(chat_id, text):
         print(f"텔레그램 전송 에러: {e}")
         return None
 
+def send_telegram_photo(chat_id, photo_data, caption=None, thread_id=None):
+    """텔레그램 사진 발송"""
+    url = f'{TELEGRAM_API_URL}/sendPhoto'
+    files = {'photo': photo_data}
+    data = {'chat_id': chat_id}
+    if caption:
+        data['caption'] = caption
+        data['parse_mode'] = 'HTML'
+    if thread_id:
+        data['message_thread_id'] = thread_id
+    
+    try:
+        response = requests.post(url, data=data, files=files)
+        return response.json()
+    except Exception as e:
+        print(f"텔레그램 사진 전송 에러: {e}")
+        return None
+
+def send_telegram_video(chat_id, video_data, caption=None, thread_id=None):
+    """텔레그램 비디오 발송"""
+    url = f'{TELEGRAM_API_URL}/sendVideo'
+    files = {'video': video_data}
+    data = {'chat_id': chat_id}
+    if caption:
+        data['caption'] = caption
+        data['parse_mode'] = 'HTML'
+    if thread_id:
+        data['message_thread_id'] = thread_id
+    
+    try:
+        response = requests.post(url, data=data, files=files)
+        return response.json()
+    except Exception as e:
+        print(f"텔레그램 비디오 전송 에러: {e}")
+        return None
+
+def create_telegram_topic(user_id):
+    """텔레그램 그룹 내에 유저 전용 주제(Topic) 생성"""
+    if user_id in topic_ids:
+        return topic_ids[user_id]
+
+    url = f'{TELEGRAM_API_URL}/createForumTopic'
+    payload = {'chat_id': ADMIN_CHAT_ID, 'name': f"상담: {user_id}"}
+    
+    try:
+        response = requests.post(url, json=payload).json()
+        if response.get('ok'):
+            thread_id = response['result']['message_thread_id']
+            topic_ids[user_id] = thread_id
+            return thread_id
+        else:
+            print(f"Topic 생성 실패: {response}")
+            return None
+    except Exception as e:
+        print(f"Topic 생성 에러: {e}")
+        return None
+
 def notify_admin(user_id, user_message):
-    """관리자에게 상담 요청 알림"""
+    """새 상담 요청 시 Topic을 생성하고 알림"""
+    thread_id = create_telegram_topic(user_id)
     timestamp = kst_now().strftime('%Y-%m-%d %H:%M:%S')
+    
     message = (
-        f"🔔 <b>새 상담 요청</b>\n\n"
-        f"USER_ID: [{user_id}]\n"
-        f"💬 첫 메시지: {user_message}\n"
-        f"⏰ {timestamp}\n\n"
-        f"<b>상담 세션이 시작되었습니다.</b>\n"
-        f"이 메시지에 답장하여 대화하세요.\n"
-        f"세션은 {SESSION_TIMEOUT_MINUTES}분간 유지됩니다."
+        f"🔔 <b>새 상담 요청</b>\n"
+        f"━━━━━━━━━━━━━━\n"
+        f"💬 내용: {user_message}\n"
+        f"⏰ 시간: {timestamp}\n"
+        f"━━━━━━━━━━━━━━\n"
+        f"<b>이곳에서 대화를 시작하세요.</b>"
     )
-    return send_telegram_message(ADMIN_CHAT_ID, message)
+    
+    return send_telegram_message(ADMIN_CHAT_ID, message, thread_id)
 
 def notify_admin_message(user_id, user_message):
-    """진행 중인 상담의 사용자 메시지를 관리자에게 전달"""
+    """특정 유저의 Topic 방으로 메시지 전송"""
+    thread_id = create_telegram_topic(user_id)
+    
     message = (
-        f"💬 <b>USER_ID: [{user_id}]</b>\n\n"
+        f"👤 <b>유저 메시지</b>\n\n"
         f"{user_message}\n\n"
-        f"⏰ {kst_now().strftime('%H:%M:%S')}"
+        f"⏰ {kst_now().strftime('%H:%M:%S')}\n"
+        f"ID: [{user_id}]"
     )
-    return send_telegram_message(ADMIN_CHAT_ID, message)
+    
+    return send_telegram_message(ADMIN_CHAT_ID, message, thread_id)
+
+def notify_admin_file(user_id, file_path, file_type, original_filename):
+    """파일을 텔레그램으로 전송"""
+    thread_id = create_telegram_topic(user_id)
+    caption = f"👤 유저가 파일을 보냈습니다\n파일명: {original_filename}\n⏰ {kst_now().strftime('%H:%M:%S')}\nID: [{user_id}]"
+    
+    try:
+        with open(file_path, 'rb') as f:
+            if file_type == 'image':
+                return send_telegram_photo(ADMIN_CHAT_ID, f, caption, thread_id)
+            elif file_type == 'video':
+                return send_telegram_video(ADMIN_CHAT_ID, f, caption, thread_id)
+    except Exception as e:
+        print(f"파일 전송 실패: {e}")
+        return None
 
 def find_faq_answer(message):
     """FAQ 데이터에서 키워드 매칭"""
@@ -343,6 +405,27 @@ def index():
         session['user_id'] = str(uuid.uuid4())[:8]
     return render_template('chatbot.html')
 
+@app.route('/api/greeting', methods=['GET'])
+def greeting():
+    """첫 접속 시 인사 메시지"""
+    user_id = session.get('user_id')
+    
+    if user_id not in greeted_users:
+        greeted_users.add(user_id)
+        greeting_message = (
+            "안녕하세요! 해외건설협회 상담 챗봇입니다. 😊\n\n"
+            "궁금하신 사항을 자유롭게 물어보세요.\n"
+            "직원과 상담을 원하시면 '상담원'을 입력해주세요."
+        )
+        save_to_google_sheets(user_id, 'greeting', greeting_message, 'bot')
+        return jsonify({
+            'has_greeting': True,
+            'message': greeting_message,
+            'timestamp': kst_now().isoformat()
+        })
+    
+    return jsonify({'has_greeting': False})
+
 @app.route('/api/chat', methods=['POST'])
 def chat():
     """채팅 API 엔드포인트"""
@@ -353,10 +436,9 @@ def chat():
     if not user_message:
         return jsonify({'error': '메시지를 입력해주세요'}), 400
 
-    # 사용자 메시지 저장
     save_to_google_sheets(user_id, 'user_message', user_message, 'user')
 
-    # 1. 상담 종료 체크
+    # 상담 종료 체크
     if user_message in ['상담종료', '상담 종료', '종료']:
         if is_session_active(user_id):
             end_consultation_session(user_id, 'manual')
@@ -376,30 +458,19 @@ def chat():
                 'timestamp': kst_now().isoformat()
             })
 
-    # 2. 활성 상담 세션이 있는 경우 - 모든 메시지를 관리자에게 전달
+    # 활성 상담 세션
     if is_session_active(user_id):
         update_session_activity(user_id)
         notify_admin_message(user_id, user_message)
-        
-        # response_text = '메시지가 상담원에게 전달되었습니다. 답변을 기다려주세요...'
-        # save_to_google_sheets(user_id, 'consultation', user_message, 'user')
-        
-        # return jsonify({
-        #     'type': 'consultation_active',
-        #     'message': response_text,
-        #     'timestamp': kst_now().isoformat()
-
-        # 안내 문구를 보내지 않기 위해 메시지를 빈 값으로 설정하거나 
-        # 클라이언트에서 무시할 특정 타입을 보냅니다.
         save_to_google_sheets(user_id, 'consultation', user_message, 'user')
         
         return jsonify({
             'type': 'consultation_active',
-            'message': '', # 메시지를 비워서 보냄
+            'message': '',
             'timestamp': kst_now().isoformat()
         })
 
-    # 3. 상담원 연결 요청
+    # 상담원 연결 요청
     if any(k in user_message for k in ADMIN_KEYWORDS):
         start_consultation_session(user_id)
         notify_admin(user_id, user_message)
@@ -418,7 +489,7 @@ def chat():
             'timestamp': kst_now().isoformat()
         })
 
-    # 4. FAQ 자동 응답
+    # FAQ 자동 응답
     faq_answer = find_faq_answer(user_message)
     if faq_answer:
         save_to_google_sheets(user_id, 'faq', faq_answer, 'bot')
@@ -428,7 +499,7 @@ def chat():
             'timestamp': kst_now().isoformat()
         })
 
-    # 5. 기본 응답
+    # 기본 응답
     response_text = (
         "죄송합니다. 정확한 답변을 찾지 못했습니다.\n\n"
         "도움말 키워드: 영업시간, 위치, 연락처, 이메일\n\n"
@@ -442,18 +513,66 @@ def chat():
         'timestamp': kst_now().isoformat()
     })
 
+@app.route('/api/upload', methods=['POST'])
+def upload_file():
+    """파일 업로드 처리"""
+    user_id = session.get('user_id', 'unknown')
+    
+    if 'file' not in request.files:
+        return jsonify({'error': '파일이 없습니다'}), 400
+    
+    file = request.files['file']
+    
+    if file.filename == '':
+        return jsonify({'error': '파일이 선택되지 않았습니다'}), 400
+    
+    if not allowed_file(file.filename):
+        return jsonify({'error': '지원하지 않는 파일 형식입니다'}), 400
+    
+    # 세션 활성화 체크
+    if not is_session_active(user_id):
+        return jsonify({'error': '상담원과 연결된 상태에서만 파일을 보낼 수 있습니다'}), 403
+    
+    try:
+        # 파일 저장
+        filename = secure_filename(file.filename)
+        filepath = os.path.join(UPLOAD_FOLDER, f"{user_id}_{kst_now().timestamp()}_{filename}")
+        file.save(filepath)
+        
+        # 파일 타입 확인
+        file_type = 'image' if is_image(filename) else 'video'
+        
+        # 텔레그램으로 전송
+        result = notify_admin_file(user_id, filepath, file_type, filename)
+        
+        # 로그 저장
+        save_to_google_sheets(user_id, 'file_upload', f'[{file_type.upper()}] {filename}', 'user')
+        
+        # 임시 파일 삭제
+        if os.path.exists(filepath):
+            os.remove(filepath)
+        
+        update_session_activity(user_id)
+        
+        return jsonify({
+            'success': True,
+            'message': f'{file_type} 파일이 상담원에게 전송되었습니다',
+            'timestamp': kst_now().isoformat()
+        })
+        
+    except Exception as e:
+        print(f"파일 업로드 에러: {e}")
+        return jsonify({'error': '파일 업로드 중 오류가 발생했습니다'}), 500
+
 @app.route('/api/check_reply', methods=['GET'])
 def check_reply():
-    """웹 클라이언트에서 주기적으로 호출하여 관리자 답변 확인"""
+    """관리자 답변 확인"""
     user_id = session.get('user_id')
     
     if user_id in admin_responses and admin_responses[user_id]:
         reply = admin_responses[user_id].pop(0)
-        
-        # 관리자 답변 저장
         save_to_google_sheets(user_id, 'consultation', reply, 'admin')
         
-        # 세션 활동 업데이트
         if is_session_active(user_id):
             update_session_activity(user_id)
         
@@ -463,37 +582,33 @@ def check_reply():
 
 @app.route('/api/webhook', methods=['POST'])
 def telegram_webhook():
-    """텔레그램 서버로부터 오는 알림 처리"""
+    """텔레그램 웹훅"""
     data = request.json
     
-    # 관리자가 특정 메시지에 '답장'을 한 경우
-    if 'message' in data and 'reply_to_message' in data['message']:
-        admin_text = data['message'].get('text')
-        original_text = data['message']['reply_to_message'].get('text', '')
+    if 'message' in data:
+        msg = data['message']
+        admin_text = msg.get('text')
+        thread_id = msg.get('message_thread_id')
         
-        # 원본 메시지에서 USER_ID 추출
-        match = re.search(r'USER_ID: \[(.*?)\]', original_text)
-        if match:
-            target_user_id = match.group(1)
-            
-            # 세션이 활성화되어 있는지 확인
+        target_user_id = next((uid for uid, tid in topic_ids.items() if tid == thread_id), None)
+        
+        if target_user_id and admin_text:
+            if msg.get('from', {}).get('is_bot'):
+                return jsonify({'status': 'ok'})
+
             if is_session_active(target_user_id):
                 if target_user_id not in admin_responses:
                     admin_responses[target_user_id] = []
                 admin_responses[target_user_id].append(admin_text)
                 update_session_activity(target_user_id)
             else:
-                # 세션이 종료된 경우 관리자에게 알림
-                send_telegram_message(
-                    ADMIN_CHAT_ID,
-                    f"⚠️ USER_ID [{target_user_id}]의 상담 세션이 종료되었습니다."
-                )
+                send_telegram_message(ADMIN_CHAT_ID, "⚠️ 세션이 종료된 유저입니다.", thread_id)
     
     return jsonify({'status': 'ok'})
 
 @app.route('/api/session_status', methods=['GET'])
 def session_status():
-    """현재 세션 상태 확인"""
+    """세션 상태 확인"""
     user_id = session.get('user_id')
     is_active = is_session_active(user_id)
     
