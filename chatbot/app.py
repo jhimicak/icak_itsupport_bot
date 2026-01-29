@@ -273,6 +273,24 @@ def notify_admin_session_end(user_id, reason, duration):
 
 # --- 텔레그램 함수 ---
 
+def get_telegram_file_url(file_id):
+    """텔레그램 파일 ID로 다운로드 URL 가져오기"""
+    try:
+        url = f'{TELEGRAM_API_URL}/getFile'
+        response = requests.get(url, params={'file_id': file_id})
+        result = response.json()
+        
+        if result.get('ok'):
+            file_path = result['result']['file_path']
+            file_url = f'https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}'
+            return file_url
+        else:
+            print(f"파일 URL 가져오기 실패: {result}")
+            return None
+    except Exception as e:
+        print(f"파일 URL 가져오기 에러: {e}")
+        return None
+
 def send_telegram_message(chat_id, text, thread_id=None):
     """텔레그램 메시지 발송"""
     url = f'{TELEGRAM_API_URL}/sendMessage'
@@ -566,43 +584,118 @@ def upload_file():
 
 @app.route('/api/check_reply', methods=['GET'])
 def check_reply():
-    """관리자 답변 확인"""
+    """관리자 답변 확인 - 텍스트 및 미디어 포함"""
     user_id = session.get('user_id')
     
     if user_id in admin_responses and admin_responses[user_id]:
-        reply = admin_responses[user_id].pop(0)
-        save_to_google_sheets(user_id, 'consultation', reply, 'admin')
+        reply_data = admin_responses[user_id].pop(0)
         
+        # 텍스트인 경우
+        if isinstance(reply_data, str):
+            reply_data = {'type': 'text', 'content': reply_data}
+        
+        # Google Sheets 저장은 웹훅에서 이미 처리됨
+        
+        # 세션 활동 업데이트
         if is_session_active(user_id):
             update_session_activity(user_id)
         
-        return jsonify({'has_reply': True, 'message': reply})
+        return jsonify({'has_reply': True, 'data': reply_data})
     
     return jsonify({'has_reply': False})
 
 @app.route('/api/webhook', methods=['POST'])
 def telegram_webhook():
-    """텔레그램 웹훅"""
+    """텔레그램 웹훅 - 텍스트 및 미디어 처리"""
     data = request.json
     
     if 'message' in data:
         msg = data['message']
-        admin_text = msg.get('text')
         thread_id = msg.get('message_thread_id')
         
+        # 봇 자신의 메시지는 무시
+        if msg.get('from', {}).get('is_bot'):
+            return jsonify({'status': 'ok'})
+        
+        # 어느 사용자의 Topic인지 확인
         target_user_id = next((uid for uid, tid in topic_ids.items() if tid == thread_id), None)
         
-        if target_user_id and admin_text:
-            if msg.get('from', {}).get('is_bot'):
-                return jsonify({'status': 'ok'})
-
-            if is_session_active(target_user_id):
-                if target_user_id not in admin_responses:
-                    admin_responses[target_user_id] = []
-                admin_responses[target_user_id].append(admin_text)
+        if not target_user_id:
+            return jsonify({'status': 'ok'})
+        
+        # 세션 활성화 확인
+        if not is_session_active(target_user_id):
+            send_telegram_message(ADMIN_CHAT_ID, "⚠️ 세션이 종료된 유저입니다.", thread_id)
+            return jsonify({'status': 'ok'})
+        
+        # 응답 저장소 초기화
+        if target_user_id not in admin_responses:
+            admin_responses[target_user_id] = []
+        
+        # 1. 텍스트 메시지 처리
+        if 'text' in msg:
+            admin_text = msg['text']
+            admin_responses[target_user_id].append({
+                'type': 'text',
+                'content': admin_text
+            })
+            save_to_google_sheets(target_user_id, 'consultation', admin_text, 'admin')
+            update_session_activity(target_user_id)
+        
+        # 2. 사진 메시지 처리
+        elif 'photo' in msg:
+            # 가장 큰 해상도의 사진 선택
+            photo = msg['photo'][-1]
+            file_id = photo['file_id']
+            caption = msg.get('caption', '')
+            
+            # 텔레그램 파일 URL 가져오기
+            file_url = get_telegram_file_url(file_id)
+            
+            if file_url:
+                admin_responses[target_user_id].append({
+                    'type': 'photo',
+                    'url': file_url,
+                    'caption': caption
+                })
+                save_to_google_sheets(target_user_id, 'consultation', f'[사진 전송] {caption}', 'admin')
                 update_session_activity(target_user_id)
-            else:
-                send_telegram_message(ADMIN_CHAT_ID, "⚠️ 세션이 종료된 유저입니다.", thread_id)
+        
+        # 3. 비디오 메시지 처리
+        elif 'video' in msg:
+            video = msg['video']
+            file_id = video['file_id']
+            caption = msg.get('caption', '')
+            
+            file_url = get_telegram_file_url(file_id)
+            
+            if file_url:
+                admin_responses[target_user_id].append({
+                    'type': 'video',
+                    'url': file_url,
+                    'caption': caption
+                })
+                save_to_google_sheets(target_user_id, 'consultation', f'[비디오 전송] {caption}', 'admin')
+                update_session_activity(target_user_id)
+        
+        # 4. 문서 메시지 처리 (선택사항)
+        elif 'document' in msg:
+            document = msg['document']
+            file_id = document['file_id']
+            file_name = document.get('file_name', '파일')
+            caption = msg.get('caption', '')
+            
+            file_url = get_telegram_file_url(file_id)
+            
+            if file_url:
+                admin_responses[target_user_id].append({
+                    'type': 'document',
+                    'url': file_url,
+                    'name': file_name,
+                    'caption': caption
+                })
+                save_to_google_sheets(target_user_id, 'consultation', f'[문서 전송] {file_name}', 'admin')
+                update_session_activity(target_user_id)
     
     return jsonify({'status': 'ok'})
 
