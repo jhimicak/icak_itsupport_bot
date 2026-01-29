@@ -137,6 +137,13 @@
             padding: 8px 12px;
         }
 
+        .message-image, .message-video {
+            max-width: 100%;
+            border-radius: 12px;
+            margin-top: 8px;
+            cursor: pointer;
+        }
+
         .timestamp {
             font-size: 0.7em;
             color: #999;
@@ -147,6 +154,12 @@
             padding: 20px;
             background: white;
             border-top: 1px solid #e0e0e0;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .input-row {
             display: flex;
             gap: 10px;
         }
@@ -164,7 +177,7 @@
         .chat-input:focus { border-color: #667eea; }
         .chat-input.session-active { border-color: #4ade80; }
 
-        .send-button {
+        .send-button, .file-button {
             padding: 12px 24px;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
@@ -176,15 +189,58 @@
             font-weight: bold;
         }
 
-        .send-button:hover {
+        .file-button {
+            background: linear-gradient(135deg, #f59e0b 0%, #ea580c 100%);
+            padding: 12px 20px;
+        }
+
+        .send-button:hover, .file-button:hover {
             transform: translateY(-2px);
             box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
         }
 
-        .send-button:disabled {
+        .send-button:disabled, .file-button:disabled {
             opacity: 0.5;
             cursor: not-allowed;
             transform: none;
+        }
+
+        .file-input {
+            display: none;
+        }
+
+        .file-preview {
+            display: none;
+            align-items: center;
+            gap: 10px;
+            padding: 10px;
+            background: #f0f0f0;
+            border-radius: 10px;
+            font-size: 0.9em;
+        }
+
+        .file-preview.show {
+            display: flex;
+        }
+
+        .file-preview-image {
+            max-width: 100px;
+            max-height: 100px;
+            border-radius: 8px;
+        }
+
+        .file-info {
+            flex: 1;
+        }
+
+        .remove-file {
+            background: #ef4444;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 12px;
+            cursor: pointer;
+            font-size: 0.85em;
         }
 
         .typing-indicator {
@@ -213,19 +269,6 @@
             30% { transform: translateY(-10px); }
         }
 
-        .welcome-message {
-            text-align: center;
-            padding: 20px;
-            color: #666;
-            font-size: 0.9em;
-            width: 100%;
-        }
-
-        .chat-messages::-webkit-scrollbar { width: 6px; }
-        .chat-messages::-webkit-scrollbar-track { background: #f1f1f1; }
-        .chat-messages::-webkit-scrollbar-thumb { background: #667eea; border-radius: 3px; }
-
-        /* 상담원 메시지 전용 스타일 추가 */
         .message.admin-style {
             align-self: flex-start;
             align-items: flex-start;
@@ -237,10 +280,9 @@
             border-bottom-left-radius: 4px;
             box-shadow: 0 4px 12px rgba(34, 197, 94, 0.2);
             padding: 10px 16px;
-            /* 위쪽 빈 공간 방지를 위해 display와 line-height 조정 */
             display: flex;
             flex-direction: column;
-            line-height: 1.2; 
+            line-height: 1.2;
         }
 
         .admin-label {
@@ -248,7 +290,6 @@
             font-weight: bold;
             margin-bottom: 4px;
             opacity: 0.95;
-            /* 텍스트 상단 여백 제거 */
             display: flex;
             align-items: center;
         }
@@ -259,6 +300,10 @@
             white-space: pre-line;
             word-break: break-all;
         }
+
+        .chat-messages::-webkit-scrollbar { width: 6px; }
+        .chat-messages::-webkit-scrollbar-track { background: #f1f1f1; }
+        .chat-messages::-webkit-scrollbar-thumb { background: #667eea; border-radius: 3px; }
 
         @media (max-width: 768px) {
             .chat-container { 
@@ -281,18 +326,24 @@
             <div class="session-indicator" id="sessionIndicator">● 상담원 연결 중</div>
         </div>
         
-        <div class="chat-messages" id="chatMessages">
-            <div class="welcome-message">
-                안녕하세요! 무엇을 도와드릴까요?<br>
-                <small>영업시간, 위치, 연락처 등을 물어보세요.<br>
-                직원과 상담을 원하시면 <strong>"상담원"</strong>을 입력해주세요.</small>
-            </div>
-        </div>
+        <div class="chat-messages" id="chatMessages"></div>
         
         <div class="chat-input-container">
-            <input type="text" class="chat-input" id="messageInput" 
-                   placeholder="메시지를 입력하세요..." autocomplete="off">
-            <button class="send-button" id="sendButton">전송</button>
+            <div class="file-preview" id="filePreview">
+                <img id="previewImage" class="file-preview-image" style="display: none;">
+                <div class="file-info" id="fileInfo"></div>
+                <button class="remove-file" onclick="removeFile()">삭제</button>
+            </div>
+            <div class="input-row">
+                <input type="text" class="chat-input" id="messageInput" 
+                       placeholder="메시지를 입력하세요..." autocomplete="off">
+                <input type="file" id="fileInput" class="file-input" 
+                       accept="image/*,video/*" onchange="handleFileSelect(event)">
+                <button class="file-button" id="fileButton" onclick="document.getElementById('fileInput').click()">
+                    📎
+                </button>
+                <button class="send-button" id="sendButton">전송</button>
+            </div>
         </div>
     </div>
 
@@ -300,9 +351,28 @@
         const chatMessages = document.getElementById('chatMessages');
         const messageInput = document.getElementById('messageInput');
         const sendButton = document.getElementById('sendButton');
+        const fileButton = document.getElementById('fileButton');
         const sessionIndicator = document.getElementById('sessionIndicator');
+        const filePreview = document.getElementById('filePreview');
+        const previewImage = document.getElementById('previewImage');
+        const fileInfo = document.getElementById('fileInfo');
         
         let isSessionActive = false;
+        let selectedFile = null;
+
+        // 페이지 로드 시 인사 메시지 가져오기
+        async function fetchGreeting() {
+            try {
+                const response = await fetch('/api/greeting');
+                const data = await response.json();
+                
+                if (data.has_greeting) {
+                    addMessage(data.message, 'bot');
+                }
+            } catch (error) {
+                console.error('인사 메시지 오류:', error);
+            }
+        }
 
         function addMessage(content, type = 'bot') {
             const messageDiv = document.createElement('div');
@@ -330,10 +400,12 @@
                 sessionIndicator.classList.add('active');
                 messageInput.classList.add('session-active');
                 messageInput.placeholder = '상담원과 대화 중... (종료하려면 "상담종료" 입력)';
+                fileButton.disabled = false;
             } else {
                 sessionIndicator.classList.remove('active');
                 messageInput.classList.remove('session-active');
                 messageInput.placeholder = '메시지를 입력하세요...';
+                fileButton.disabled = true;
             }
         }
 
@@ -355,7 +427,86 @@
             if (indicator) indicator.remove();
         }
 
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            if (!isSessionActive) {
+                alert('상담원과 연결된 상태에서만 파일을 보낼 수 있습니다.');
+                event.target.value = '';
+                return;
+            }
+
+            // 파일 크기 체크 (50MB)
+            if (file.size > 50 * 1024 * 1024) {
+                alert('파일 크기는 50MB 이하만 가능합니다.');
+                event.target.value = '';
+                return;
+            }
+
+            selectedFile = file;
+            filePreview.classList.add('show');
+            
+            // 이미지 미리보기
+            if (file.type.startsWith('image/')) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    previewImage.src = e.target.result;
+                    previewImage.style.display = 'block';
+                };
+                reader.readAsDataURL(file);
+                fileInfo.textContent = `이미지: ${file.name}`;
+            } else if (file.type.startsWith('video/')) {
+                previewImage.style.display = 'none';
+                fileInfo.textContent = `비디오: ${file.name}`;
+            } else {
+                previewImage.style.display = 'none';
+                fileInfo.textContent = `파일: ${file.name}`;
+            }
+        }
+
+        function removeFile() {
+            selectedFile = null;
+            document.getElementById('fileInput').value = '';
+            filePreview.classList.remove('show');
+            previewImage.style.display = 'none';
+        }
+
+        async function sendFile() {
+            if (!selectedFile) return;
+
+            const formData = new FormData();
+            formData.append('file', selectedFile);
+
+            try {
+                const response = await fetch('/api/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    // 사용자 화면에 파일 업로드 표시
+                    const fileType = selectedFile.type.startsWith('image/') ? 'image' : 'video';
+                    addMessage(`📎 ${fileType === 'image' ? '이미지' : '비디오'} 전송: ${selectedFile.name}`, 'user');
+                    removeFile();
+                } else {
+                    alert(data.error || '파일 전송 실패');
+                }
+            } catch (error) {
+                console.error('파일 업로드 오류:', error);
+                alert('파일 업로드 중 오류가 발생했습니다.');
+            }
+        }
+
         async function sendMessage() {
+            // 파일이 선택되어 있으면 파일 전송
+            if (selectedFile) {
+                await sendFile();
+                return;
+            }
+
             const message = messageInput.value.trim();
             if (!message) return;
             
@@ -376,7 +527,6 @@
                 hideTypingIndicator();
                 
                 if (response.ok) {
-                    // 세션 시작 또는 종료 감지
                     if (data.type === 'session_start') {
                         updateSessionUI(true);
                         addMessage(data.message, 'system');
@@ -384,11 +534,8 @@
                         updateSessionUI(false);
                         addMessage(data.message, 'system');
                     } else if (data.type === 'consultation_active') {
-                        // [중요] 아무런 addMessage도 호출하지 않습니다.
-                        // 이렇게 하면 화면에 아무것도 추가되지 않고 전송만 완료됩니다.
-                        console.log("상담원에게 전달됨 (화면 출력 생략)"); 
+                        console.log("상담원에게 전달됨");
                     } else {
-                        // 일반 챗봇 응답이면서 메시지가 있는 경우만 출력
                         if (data.message && data.message.trim() !== "") {
                             addMessage(data.message, 'bot');
                         }
@@ -413,8 +560,7 @@
                 
                 if (data.has_reply) {
                     const messageDiv = document.createElement('div');
-                    // bot 클래스를 유지하여 왼쪽 정렬을 상속받고, admin-style을 추가합니다.
-                    messageDiv.className = 'message bot admin-style'; 
+                    messageDiv.className = 'message bot admin-style';
                     
                     const now = new Date();
                     const timeString = now.toLocaleTimeString('ko-KR', { 
@@ -446,10 +592,13 @@
             }
         });
 
-        // 3초마다 관리자 답변 확인
         setInterval(pollAdminReply, 3000);
         
-        window.addEventListener('load', () => messageInput.focus());
+        window.addEventListener('load', () => {
+            fetchGreeting();
+            messageInput.focus();
+            fileButton.disabled = true; // 초기에는 파일 버튼 비활성화
+        });
     </script>
 </body>
 </html>
