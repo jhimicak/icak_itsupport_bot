@@ -139,9 +139,20 @@
 
         .message-image, .message-video {
             max-width: 100%;
+            max-height: 300px;
             border-radius: 12px;
             margin-top: 8px;
             cursor: pointer;
+            object-fit: contain;
+        }
+
+        .message-video {
+            max-height: 400px;
+        }
+
+        .message.admin-style .message-image,
+        .message.admin-style .message-video {
+            margin-top: 8px;
         }
 
         .timestamp {
@@ -340,7 +351,7 @@
                 <input type="file" id="fileInput" class="file-input" 
                        accept="image/*,video/*" onchange="handleFileSelect(event)">
                 <button class="file-button" id="fileButton" onclick="document.getElementById('fileInput').click()">
-                    📎
+                    +
                 </button>
                 <button class="send-button" id="sendButton">전송</button>
             </div>
@@ -559,6 +570,7 @@
                 const data = await response.json();
                 
                 if (data.has_reply) {
+                    const replyData = data.data;
                     const messageDiv = document.createElement('div');
                     messageDiv.className = 'message bot admin-style';
                     
@@ -568,13 +580,55 @@
                         minute: '2-digit' 
                     });
                     
-                    messageDiv.innerHTML = `
-                        <div class="message-content">
-                            <div class="admin-label">👤 상담원</div>
-                            <div class="admin-text">${data.message.trim()}</div>
-                        </div>
-                        <div class="timestamp">${timeString}</div>
-                    `;
+                    let contentHtml = '';
+                    
+                    // 텍스트 메시지
+                    if (replyData.type === 'text') {
+                        contentHtml = `
+                            <div class="message-content">
+                                <div class="admin-label">👤 상담원</div>
+                                <div class="admin-text">${replyData.content.trim()}</div>
+                            </div>
+                        `;
+                    }
+                    // 사진 메시지
+                    else if (replyData.type === 'photo') {
+                        contentHtml = `
+                            <div class="message-content">
+                                <div class="admin-label">👤 상담원</div>
+                                ${replyData.caption ? `<div class="admin-text">${replyData.caption}</div>` : ''}
+                                <img src="${replyData.url}" class="message-image" alt="상담원 이미지" 
+                                     onclick="window.open('${replyData.url}', '_blank')">
+                            </div>
+                        `;
+                    }
+                    // 비디오 메시지
+                    else if (replyData.type === 'video') {
+                        contentHtml = `
+                            <div class="message-content">
+                                <div class="admin-label">👤 상담원</div>
+                                ${replyData.caption ? `<div class="admin-text">${replyData.caption}</div>` : ''}
+                                <video src="${replyData.url}" class="message-video" controls 
+                                       onclick="this.paused ? this.play() : this.pause()"></video>
+                            </div>
+                        `;
+                    }
+                    // 문서 메시지
+                    else if (replyData.type === 'document') {
+                        contentHtml = `
+                            <div class="message-content">
+                                <div class="admin-label">👤 상담원</div>
+                                ${replyData.caption ? `<div class="admin-text">${replyData.caption}</div>` : ''}
+                                <div class="admin-text">
+                                    📎 <a href="${replyData.url}" target="_blank" style="color: white; text-decoration: underline;">
+                                        ${replyData.name}
+                                    </a>
+                                </div>
+                            </div>
+                        `;
+                    }
+                    
+                    messageDiv.innerHTML = contentHtml + `<div class="timestamp">${timeString}</div>`;
                     
                     chatMessages.appendChild(messageDiv);
                     chatMessages.scrollTop = chatMessages.scrollHeight;
