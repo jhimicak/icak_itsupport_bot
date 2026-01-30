@@ -351,7 +351,7 @@
                 <input type="file" id="fileInput" class="file-input" 
                        accept="image/*,video/*" onchange="handleFileSelect(event)">
                 <button class="file-button" id="fileButton" onclick="document.getElementById('fileInput').click()">
-                    +
+                    📎
                 </button>
                 <button class="send-button" id="sendButton">전송</button>
             </div>
@@ -448,15 +448,30 @@
                 return;
             }
 
+            // 파일 타입 체크
+            const allowedTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 
+                                'video/mp4', 'video/quicktime', 'video/x-msvideo'];
+            if (!allowedTypes.includes(file.type)) {
+                alert('지원하지 않는 파일 형식입니다.\n지원 형식: 이미지(PNG, JPG, GIF), 비디오(MP4, MOV, AVI)');
+                event.target.value = '';
+                return;
+            }
+
             // 파일 크기 체크 (50MB)
             if (file.size > 50 * 1024 * 1024) {
-                alert('파일 크기는 50MB 이하만 가능합니다.');
+                alert(`파일 크기는 50MB 이하만 가능합니다.\n현재 파일: ${(file.size / (1024 * 1024)).toFixed(2)}MB`);
                 event.target.value = '';
                 return;
             }
 
             selectedFile = file;
             filePreview.classList.add('show');
+            
+            // 파일 크기 표시
+            const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
+            const fileSizeText = fileSizeMB < 1 
+                ? `${(file.size / 1024).toFixed(0)}KB` 
+                : `${fileSizeMB}MB`;
             
             // 이미지 미리보기
             if (file.type.startsWith('image/')) {
@@ -466,13 +481,13 @@
                     previewImage.style.display = 'block';
                 };
                 reader.readAsDataURL(file);
-                fileInfo.textContent = `이미지: ${file.name}`;
+                fileInfo.textContent = `이미지: ${file.name} (${fileSizeText})`;
             } else if (file.type.startsWith('video/')) {
                 previewImage.style.display = 'none';
-                fileInfo.textContent = `비디오: ${file.name}`;
+                fileInfo.textContent = `비디오: ${file.name} (${fileSizeText})`;
             } else {
                 previewImage.style.display = 'none';
-                fileInfo.textContent = `파일: ${file.name}`;
+                fileInfo.textContent = `파일: ${file.name} (${fileSizeText})`;
             }
         }
 
@@ -489,6 +504,18 @@
             const formData = new FormData();
             formData.append('file', selectedFile);
 
+            // 업로드 중 표시
+            const uploadingDiv = document.createElement('div');
+            uploadingDiv.className = 'message system';
+            uploadingDiv.id = 'uploadingIndicator';
+            uploadingDiv.innerHTML = `
+                <div class="message-content">
+                    📤 파일 업로드 중...
+                </div>
+            `;
+            chatMessages.appendChild(uploadingDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+
             try {
                 const response = await fetch('/api/upload', {
                     method: 'POST',
@@ -497,17 +524,27 @@
 
                 const data = await response.json();
 
+                // 업로드 중 메시지 제거
+                const indicator = document.getElementById('uploadingIndicator');
+                if (indicator) indicator.remove();
+
                 if (response.ok) {
                     // 사용자 화면에 파일 업로드 표시
-                    const fileType = selectedFile.type.startsWith('image/') ? 'image' : 'video';
-                    addMessage(`📎 ${fileType === 'image' ? '이미지' : '비디오'} 전송: ${selectedFile.name}`, 'user');
+                    const fileType = selectedFile.type.startsWith('image/') ? '이미지' : '비디오';
+                    addMessage(`📎 ${fileType} 전송: ${selectedFile.name}`, 'user');
                     removeFile();
                 } else {
-                    alert(data.error || '파일 전송 실패');
+                    // 오류 메시지 표시
+                    addMessage(`❌ 파일 전송 실패: ${data.error || '알 수 없는 오류'}`, 'system');
+                    console.error('Upload error:', data);
                 }
             } catch (error) {
+                // 업로드 중 메시지 제거
+                const indicator = document.getElementById('uploadingIndicator');
+                if (indicator) indicator.remove();
+                
                 console.error('파일 업로드 오류:', error);
-                alert('파일 업로드 중 오류가 발생했습니다.');
+                addMessage('❌ 파일 업로드 중 오류가 발생했습니다. 다시 시도해주세요.', 'system');
             }
         }
 
