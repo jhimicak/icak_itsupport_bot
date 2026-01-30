@@ -305,6 +305,42 @@ def send_telegram_message(chat_id, text, thread_id=None):
         print(f"텔레그램 전송 에러: {e}")
         return None
 
+def send_telegram_photo_bytes(chat_id, photo_data, caption=None, thread_id=None):
+    """텔레그램 사진 발송 (바이트 데이터)"""
+    url = f'{TELEGRAM_API_URL}/sendPhoto'
+    files = {'photo': ('image.jpg', photo_data, 'image/jpeg')}
+    data = {'chat_id': chat_id}
+    if caption:
+        data['caption'] = caption
+        data['parse_mode'] = 'HTML'
+    if thread_id:
+        data['message_thread_id'] = thread_id
+    
+    try:
+        response = requests.post(url, data=data, files=files)
+        return response.json()
+    except Exception as e:
+        print(f"텔레그램 사진 전송 에러: {e}")
+        return None
+
+def send_telegram_video_bytes(chat_id, video_data, caption=None, thread_id=None):
+    """텔레그램 비디오 발송 (바이트 데이터)"""
+    url = f'{TELEGRAM_API_URL}/sendVideo'
+    files = {'video': ('video.mp4', video_data, 'video/mp4')}
+    data = {'chat_id': chat_id}
+    if caption:
+        data['caption'] = caption
+        data['parse_mode'] = 'HTML'
+    if thread_id:
+        data['message_thread_id'] = thread_id
+    
+    try:
+        response = requests.post(url, data=data, files=files, timeout=60)
+        return response.json()
+    except Exception as e:
+        print(f"텔레그램 비디오 전송 에러: {e}")
+        return None
+
 def send_telegram_photo(chat_id, photo_data, caption=None, thread_id=None):
     """텔레그램 사진 발송"""
     url = f'{TELEGRAM_API_URL}/sendPhoto'
@@ -390,21 +426,6 @@ def notify_admin_message(user_id, user_message):
     )
     
     return send_telegram_message(ADMIN_CHAT_ID, message, thread_id)
-
-def notify_admin_file(user_id, file_path, file_type, original_filename):
-    """파일을 텔레그램으로 전송"""
-    thread_id = create_telegram_topic(user_id)
-    caption = f"👤 유저가 파일을 보냈습니다\n파일명: {original_filename}\n⏰ {kst_now().strftime('%H:%M:%S')}\nID: [{user_id}]"
-    
-    try:
-        with open(file_path, 'rb') as f:
-            if file_type == 'image':
-                return send_telegram_photo(ADMIN_CHAT_ID, f, caption, thread_id)
-            elif file_type == 'video':
-                return send_telegram_video(ADMIN_CHAT_ID, f, caption, thread_id)
-    except Exception as e:
-        print(f"파일 전송 실패: {e}")
-        return None
 
 def find_faq_answer(message):
     """FAQ 데이터에서 키워드 매칭"""
@@ -536,40 +557,58 @@ def upload_file():
     """파일 업로드 처리"""
     user_id = session.get('user_id', 'unknown')
     
-    if 'file' not in request.files:
-        return jsonify({'error': '파일이 없습니다'}), 400
-    
-    file = request.files['file']
-    
-    if file.filename == '':
-        return jsonify({'error': '파일이 선택되지 않았습니다'}), 400
-    
-    if not allowed_file(file.filename):
-        return jsonify({'error': '지원하지 않는 파일 형식입니다'}), 400
-    
-    # 세션 활성화 체크
-    if not is_session_active(user_id):
-        return jsonify({'error': '상담원과 연결된 상태에서만 파일을 보낼 수 있습니다'}), 403
-    
     try:
-        # 파일 저장
+        if 'file' not in request.files:
+            return jsonify({'error': '파일이 없습니다'}), 400
+        
+        file = request.files['file']
+        
+        if file.filename == '':
+            return jsonify({'error': '파일이 선택되지 않았습니다'}), 400
+        
+        if not allowed_file(file.filename):
+            return jsonify({'error': '지원하지 않는 파일 형식입니다'}), 400
+        
+        # 세션 활성화 체크
+        if not is_session_active(user_id):
+            return jsonify({'error': '상담원과 연결된 상태에서만 파일을 보낼 수 있습니다'}), 403
+        
+        # 파일 크기 체크
+        file.seek(0, os.SEEK_END)
+        file_size = file.tell()
+        file.seek(0)
+        
+        if file_size > MAX_FILE_SIZE:
+            return jsonify({'error': f'파일 크기는 {MAX_FILE_SIZE // (1024*1024)}MB 이하만 가능합니다'}), 400
+        
+        # 파일명 안전하게 처리
         filename = secure_filename(file.filename)
-        filepath = os.path.join(UPLOAD_FOLDER, f"{user_id}_{kst_now().timestamp()}_{filename}")
-        file.save(filepath)
+        if not filename:
+            filename = f"file_{kst_now().timestamp()}"
         
         # 파일 타입 확인
         file_type = 'image' if is_image(filename) else 'video'
         
+        # 파일을 메모리에서 직접 읽어서 텔레그램으로 전송
+        file_data = file.read()
+        
         # 텔레그램으로 전송
-        result = notify_admin_file(user_id, filepath, file_type, filename)
+        thread_id = create_telegram_topic(user_id)
+        caption = f"👤 유저가 파일을 보냈습니다\n파일명: {filename}\n⏰ {kst_now().strftime('%H:%M:%S')}\nID: [{user_id}]"
+        
+        result = None
+        if file_type == 'image':
+            result = send_telegram_photo_bytes(ADMIN_CHAT_ID, file_data, caption, thread_id)
+        else:
+            result = send_telegram_video_bytes(ADMIN_CHAT_ID, file_data, caption, thread_id)
+        
+        if not result or not result.get('ok'):
+            error_msg = result.get('description', '알 수 없는 오류') if result else '전송 실패'
+            print(f"❌ 텔레그램 전송 실패: {error_msg}")
+            return jsonify({'error': f'파일 전송 실패: {error_msg}'}), 500
         
         # 로그 저장
         save_to_google_sheets(user_id, 'file_upload', f'[{file_type.upper()}] {filename}', 'user')
-        
-        # 임시 파일 삭제
-        if os.path.exists(filepath):
-            os.remove(filepath)
-        
         update_session_activity(user_id)
         
         return jsonify({
@@ -579,8 +618,10 @@ def upload_file():
         })
         
     except Exception as e:
-        print(f"파일 업로드 에러: {e}")
-        return jsonify({'error': '파일 업로드 중 오류가 발생했습니다'}), 500
+        print(f"❌ 파일 업로드 에러: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': f'파일 업로드 중 오류가 발생했습니다: {str(e)}'}), 500
 
 @app.route('/api/check_reply', methods=['GET'])
 def check_reply():
