@@ -1,7 +1,7 @@
 """
-경량 RAG 시스템 (TF-IDF 기반)
+경량 RAG 시스템 (TF-IDF 기반 + Groq LLM)
 - 메모리 효율적 (~10-50MB)
-- sentence-transformers 대신 TF-IDF 사용
+- TF-IDF로 검색, Groq LLM으로 답변 정제
 - 512MB 제한 환경에서 안정적으로 작동
 """
 
@@ -10,18 +10,22 @@ import pickle
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional
 from pdf_processor import PDFProcessor
+from groq_client import GroqClient
 
 
 class RAGSystemLite:
-    """경량 RAG 시스템 클래스 (TF-IDF 기반)"""
+    """경량 RAG 시스템 클래스 (TF-IDF + Groq LLM)"""
     
-    def __init__(self):
+    def __init__(self, groq_api_key: Optional[str] = None):
         """
-        TF-IDF 벡터라이저 초기화
+        TF-IDF 벡터라이저 및 Groq 클라이언트 초기화
+        
+        Args:
+            groq_api_key: Groq API 키 (선택사항)
         """
-        print("🔄 경량 RAG 시스템 초기화 중 (TF-IDF)...")
+        print("🔄 경량 RAG 시스템 초기화 중 (TF-IDF + Groq)...")
         
         # TF-IDF 벡터라이저 (한국어 지원)
         self.vectorizer = TfidfVectorizer(
@@ -35,7 +39,13 @@ class RAGSystemLite:
         self.chunks = []
         self.tfidf_matrix = None
         
-        print("✅ 경량 RAG 시스템 초기화 완료")
+        # Groq 클라이언트 초기화
+        self.groq_client = GroqClient(api_key=groq_api_key)
+        
+        if self.groq_client.is_available():
+            print("✅ 경량 RAG 시스템 초기화 완료 (Groq 활성화)")
+        else:
+            print("✅ 경량 RAG 시스템 초기화 완료 (Groq 비활성화)")
     
     def build_index(self, chunks: List[Dict[str, any]]):
         """
@@ -96,7 +106,7 @@ class RAGSystemLite:
     
     def generate_answer(self, query: str, top_k: int = 3, similarity_threshold: float = 0.1) -> Dict:
         """
-        질문에 대한 답변 생성
+        질문에 대한 답변 생성 (Groq LLM으로 정제)
         
         Args:
             query: 사용자 질문
@@ -128,7 +138,40 @@ class RAGSystemLite:
                 'similarity': best_similarity
             }
         
-        # 답변 생성 (상위 결과 조합)
+        # 검색 결과를 Groq 형식으로 변환
+        search_results_for_groq = [
+            {
+                'chunk': chunk,
+                'similarity': similarity
+            }
+            for chunk, similarity in results
+            if similarity >= similarity_threshold
+        ]
+        
+        if not search_results_for_groq:
+            return {
+                'answer': None,
+                'sources': [],
+                'confidence': 'low'
+            }
+        
+        # Groq로 답변 정제 시도
+        if self.groq_client.is_available():
+            groq_result = self.groq_client.generate_answer_with_sources(
+                query, 
+                search_results_for_groq
+            )
+            
+            if groq_result['answer']:
+                return {
+                    'answer': groq_result['answer'],
+                    'sources': groq_result['sources'],
+                    'confidence': groq_result['confidence'],
+                    'similarity': best_similarity,
+                    'refined': groq_result['refined']
+                }
+        
+        # Groq 실패 시 또는 비활성화 시 기존 방식
         answer_parts = []
         sources = []
         
@@ -158,7 +201,8 @@ class RAGSystemLite:
             'answer': answer,
             'sources': sources,
             'confidence': confidence,
-            'similarity': best_similarity
+            'similarity': best_similarity,
+            'refined': False
         }
     
     def save_index(self, index_dir: str):
