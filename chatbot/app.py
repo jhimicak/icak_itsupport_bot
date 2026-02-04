@@ -11,7 +11,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 import base64
 from werkzeug.utils import secure_filename
 from pdf_processor import PDFProcessor
-from rag_system import RAGSystem
+from rag_system_lite import RAGSystemLite
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'your-secret-key-change-this')
@@ -100,11 +100,11 @@ def init_rag_system():
     global rag_system
     
     try:
-        print("🔄 RAG 시스템 초기화 중...")
-        rag_system = RAGSystem()
+        print("🔄 경량 RAG 시스템 초기화 중...")
+        rag_system = RAGSystemLite()
         
         # 기존 인덱스가 있으면 로드
-        if os.path.exists(os.path.join(INDEX_FOLDER, 'faiss.index')):
+        if os.path.exists(os.path.join(INDEX_FOLDER, 'vectorizer.pkl')):
             if rag_system.load_index(INDEX_FOLDER):
                 print("✅ 기존 인덱스 로드 완료")
                 return rag_system
@@ -606,8 +606,8 @@ def chat():
         })
 
     # RAG 시스템으로 PDF 검색
-    if rag_system and rag_system.index is not None:
-        result = rag_system.generate_answer(user_message, top_k=3, distance_threshold=1.5)
+    if rag_system and rag_system.tfidf_matrix is not None:
+        result = rag_system.generate_answer(user_message, top_k=3, similarity_threshold=0.1)
         
         if result['answer'] and result['confidence'] in ['high', 'medium']:
             # 출처 정보 포맷팅
