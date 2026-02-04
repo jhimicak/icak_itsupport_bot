@@ -58,6 +58,7 @@ admin_responses = {}
 active_consultations = {}
 topic_ids = {}
 greeted_users = set()  # 인사 메시지를 보낸 사용자 추적
+conversation_history = {}  # 사용자별 대화 히스토리 저장
 
 # Google Sheets 클라이언트 초기화
 google_sheets_client = None
@@ -607,7 +608,23 @@ def chat():
 
     # RAG 시스템으로 PDF 검색
     if rag_system and rag_system.tfidf_matrix is not None:
-        result = rag_system.generate_answer(user_message, top_k=3, similarity_threshold=0.1)
+        # 대화 히스토리 가져오기
+        history = conversation_history.get(user_id, [])
+        
+        # 최근 대화를 컨텍스트로 추가 (최대 3개)
+        context_messages = []
+        if history:
+            for msg in history[-3:]:
+                context_messages.append(f"이전 질문: {msg['user']}")
+                context_messages.append(f"이전 답변: {msg['bot']}")
+        
+        # 컨텍스트가 있으면 질문에 추가
+        enhanced_query = user_message
+        if context_messages:
+            context_str = "\n".join(context_messages)
+            enhanced_query = f"{context_str}\n\n현재 질문: {user_message}"
+        
+        result = rag_system.generate_answer(enhanced_query, top_k=5, similarity_threshold=0.08)
         
         if result['answer'] and result['confidence'] in ['high', 'medium']:
             # 출처 정보 포맷팅 (주석처리 - 필요시 활성화)
@@ -619,6 +636,17 @@ def chat():
             # response_text = result['answer'] + sources_text
             response_text = result['answer']  # 출처 없이 답변만 표시
             save_to_google_sheets(user_id, 'rag_answer', response_text, 'bot')
+            
+            # 대화 히스토리에 저장
+            if user_id not in conversation_history:
+                conversation_history[user_id] = []
+            conversation_history[user_id].append({
+                'user': user_message,
+                'bot': response_text
+            })
+            # 최대 10개까지만 저장
+            if len(conversation_history[user_id]) > 10:
+                conversation_history[user_id] = conversation_history[user_id][-10:]
             
             return jsonify({
                 'type': 'rag',
