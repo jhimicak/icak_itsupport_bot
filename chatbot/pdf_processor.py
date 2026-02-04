@@ -14,7 +14,7 @@ from typing import List, Dict
 class PDFProcessor:
     """문서 처리 클래스 (PDF 및 TXT 지원)"""
     
-    def __init__(self, chunk_size: int = 1000, chunk_overlap: int = 100):
+    def __init__(self, chunk_size: int = 500, chunk_overlap: int = 50):
         """
         Args:
             chunk_size: 청크당 최대 문자 수 (기본 1000자)
