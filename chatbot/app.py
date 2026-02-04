@@ -10,6 +10,8 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import base64
 from werkzeug.utils import secure_filename
+from pdf_processor import PDFProcessor
+from rag_system import RAGSystem
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'your-secret-key-change-this')
@@ -28,6 +30,13 @@ UPLOAD_FOLDER = '/tmp/uploads'  # Render에서는 /tmp 사용
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'mp4', 'mov', 'avi'}
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
+
+# PDF 문서 설정
+PDF_FOLDER = os.path.join(os.path.dirname(__file__), 'pdf_documents')
+INDEX_FOLDER = os.path.join(PDF_FOLDER, 'index')
+os.makedirs(PDF_FOLDER, exist_ok=True)
+os.makedirs(INDEX_FOLDER, exist_ok=True)
+ALLOWED_PDF_EXTENSIONS = {'pdf'}
 
 # FAQ 데이터 및 설정
 FAQ_DATA = {
@@ -52,6 +61,10 @@ greeted_users = set()  # 인사 메시지를 보낸 사용자 추적
 
 # Google Sheets 클라이언트 초기화
 google_sheets_client = None
+
+# RAG 시스템 초기화
+rag_system = None
+pdf_processor = PDFProcessor(chunk_size=500, chunk_overlap=50)
 
 def init_google_sheets():
     """Google Sheets API 초기화"""
@@ -81,6 +94,56 @@ def init_google_sheets():
         return None
 
 init_google_sheets()
+
+def init_rag_system():
+    """RAG 시스템 초기화 및 PDF 자동 인덱싱"""
+    global rag_system
+    
+    try:
+        print("🔄 RAG 시스템 초기화 중...")
+        rag_system = RAGSystem()
+        
+        # 기존 인덱스가 있으면 로드
+        if os.path.exists(os.path.join(INDEX_FOLDER, 'faiss.index')):
+            if rag_system.load_index(INDEX_FOLDER):
+                print("✅ 기존 인덱스 로드 완료")
+                return rag_system
+            else:
+                print("⚠️ 인덱스 로드 실패, PDF 재인덱싱 시작")
+        
+        # 인덱스가 없으면 PDF 폴더에서 자동 인덱싱
+        pdf_files = [f for f in os.listdir(PDF_FOLDER) if f.endswith('.pdf')]
+        
+        if not pdf_files:
+            print("⚠️ PDF 파일이 없습니다. pdf_documents/ 폴더에 PDF를 넣어주세요.")
+            return rag_system
+        
+        print(f"📄 {len(pdf_files)}개 PDF 파일 발견, 인덱싱 시작...")
+        all_chunks = []
+        
+        for pdf_file in pdf_files:
+            pdf_path = os.path.join(PDF_FOLDER, pdf_file)
+            print(f"  처리 중: {pdf_file}")
+            chunks = pdf_processor.process_pdf(pdf_path)
+            all_chunks.extend(chunks)
+        
+        if all_chunks:
+            print(f"📊 총 {len(all_chunks)}개 청크 생성, 인덱스 빌드 중...")
+            rag_system.build_index(all_chunks)
+            rag_system.save_index(INDEX_FOLDER)
+            print("✅ PDF 인덱싱 완료!")
+        else:
+            print("⚠️ PDF에서 텍스트를 추출할 수 없습니다.")
+        
+        return rag_system
+        
+    except Exception as e:
+        print(f"❌ RAG 시스템 초기화 실패: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+init_rag_system()
 
 # --- 파일 처리 함수 ---
 
@@ -435,6 +498,10 @@ def find_faq_answer(message):
             return answer
     return None
 
+def allowed_pdf_file(filename):
+    """허용된 PDF 파일인지 확인"""
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_PDF_EXTENSIONS
+
 # --- 라우트 (API) ---
 
 @app.route('/')
@@ -538,6 +605,27 @@ def chat():
             'timestamp': kst_now().isoformat()
         })
 
+    # RAG 시스템으로 PDF 검색
+    if rag_system and rag_system.index is not None:
+        result = rag_system.generate_answer(user_message, top_k=3, distance_threshold=1.5)
+        
+        if result['answer'] and result['confidence'] in ['high', 'medium']:
+            # 출처 정보 포맷팅
+            sources_text = ""
+            if result['sources']:
+                pages = [str(s['page']) for s in result['sources']]
+                sources_text = f"\n\n📄 출처: 페이지 {', '.join(pages)}"
+            
+            response_text = result['answer'] + sources_text
+            save_to_google_sheets(user_id, 'rag_answer', response_text, 'bot')
+            
+            return jsonify({
+                'type': 'rag',
+                'message': response_text,
+                'confidence': result['confidence'],
+                'timestamp': kst_now().isoformat()
+            })
+
     # 기본 응답
     response_text = (
         "죄송합니다. 정확한 답변을 찾지 못했습니다.\n\n"
@@ -552,9 +640,11 @@ def chat():
         'timestamp': kst_now().isoformat()
     })
 
+# PDF 업로드 엔드포인트 제거 (관리자가 미리 PDF를 넣어두는 방식으로 변경)
+
 @app.route('/api/upload', methods=['POST'])
 def upload_file():
-    """파일 업로드 처리"""
+    """미디어 파일 업로드 처리 (이미지/비디오)"""
     user_id = session.get('user_id', 'unknown')
     
     try:

@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="ko">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -43,6 +44,8 @@
             position: relative;
         }
 
+
+
         .session-indicator {
             position: absolute;
             top: 10px;
@@ -63,8 +66,15 @@
         }
 
         @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.7; }
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.7;
+            }
         }
 
         .chat-messages {
@@ -85,8 +95,15 @@
         }
 
         @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(10px); }
-            to { opacity: 1; transform: translateY(0); }
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
 
         .message.user {
@@ -137,7 +154,8 @@
             padding: 8px 12px;
         }
 
-        .message-image, .message-video {
+        .message-image,
+        .message-video {
             max-width: 100%;
             max-height: 300px;
             border-radius: 12px;
@@ -185,10 +203,16 @@
             transition: border-color 0.3s;
         }
 
-        .chat-input:focus { border-color: #667eea; }
-        .chat-input.session-active { border-color: #4ade80; }
+        .chat-input:focus {
+            border-color: #667eea;
+        }
 
-        .send-button, .file-button {
+        .chat-input.session-active {
+            border-color: #4ade80;
+        }
+
+        .send-button,
+        .file-button {
             padding: 12px 24px;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
@@ -205,12 +229,14 @@
             padding: 12px 20px;
         }
 
-        .send-button:hover, .file-button:hover {
+        .send-button:hover,
+        .file-button:hover {
             transform: translateY(-2px);
             box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
         }
 
-        .send-button:disabled, .file-button:disabled {
+        .send-button:disabled,
+        .file-button:disabled {
             opacity: 0.5;
             cursor: not-allowed;
             transform: none;
@@ -272,12 +298,25 @@
             animation: typing 1.4s infinite;
         }
 
-        .typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
-        .typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
+        .typing-indicator span:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+
+        .typing-indicator span:nth-child(3) {
+            animation-delay: 0.4s;
+        }
 
         @keyframes typing {
-            0%, 60%, 100% { transform: translateY(0); }
-            30% { transform: translateY(-10px); }
+
+            0%,
+            60%,
+            100% {
+                transform: translateY(0);
+            }
+
+            30% {
+                transform: translateY(-10px);
+            }
         }
 
         .message.admin-style {
@@ -312,17 +351,27 @@
             word-break: break-all;
         }
 
-        .chat-messages::-webkit-scrollbar { width: 6px; }
-        .chat-messages::-webkit-scrollbar-track { background: #f1f1f1; }
-        .chat-messages::-webkit-scrollbar-thumb { background: #667eea; border-radius: 3px; }
+        .chat-messages::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .chat-messages::-webkit-scrollbar-track {
+            background: #f1f1f1;
+        }
+
+        .chat-messages::-webkit-scrollbar-thumb {
+            background: #667eea;
+            border-radius: 3px;
+        }
 
         @media (max-width: 768px) {
-            .chat-container { 
-                width: 100%; 
-                height: 100vh; 
-                max-height: 100vh; 
-                border-radius: 0; 
+            .chat-container {
+                width: 100%;
+                height: 100vh;
+                max-height: 100vh;
+                border-radius: 0;
             }
+
             .session-indicator {
                 font-size: 0.6em;
                 padding: 4px 8px;
@@ -330,15 +379,16 @@
         }
     </style>
 </head>
+
 <body>
     <div class="chat-container">
         <div class="chat-header">
             💬 해외건설협회 상담 챗봇
             <div class="session-indicator" id="sessionIndicator">● 상담원 연결 중</div>
         </div>
-        
+
         <div class="chat-messages" id="chatMessages"></div>
-        
+
         <div class="chat-input-container">
             <div class="file-preview" id="filePreview">
                 <img id="previewImage" class="file-preview-image" style="display: none;">
@@ -346,10 +396,9 @@
                 <button class="remove-file" onclick="removeFile()">삭제</button>
             </div>
             <div class="input-row">
-                <input type="text" class="chat-input" id="messageInput" 
-                       placeholder="메시지를 입력하세요..." autocomplete="off">
-                <input type="file" id="fileInput" class="file-input" 
-                       accept="image/*,video/*" onchange="handleFileSelect(event)">
+                <input type="text" class="chat-input" id="messageInput" placeholder="메시지를 입력하세요..." autocomplete="off">
+                <input type="file" id="fileInput" class="file-input" accept="image/*,video/*"
+                    onchange="handleFileSelect(event)">
                 <button class="file-button" id="fileButton" onclick="document.getElementById('fileInput').click()">
                     📎
                 </button>
@@ -367,7 +416,7 @@
         const filePreview = document.getElementById('filePreview');
         const previewImage = document.getElementById('previewImage');
         const fileInfo = document.getElementById('fileInfo');
-        
+
         let isSessionActive = false;
         let selectedFile = null;
 
@@ -376,7 +425,7 @@
             try {
                 const response = await fetch('/api/greeting');
                 const data = await response.json();
-                
+
                 if (data.has_greeting) {
                     addMessage(data.message, 'bot');
                 }
@@ -388,25 +437,25 @@
         function addMessage(content, type = 'bot') {
             const messageDiv = document.createElement('div');
             messageDiv.className = `message ${type}`;
-            
+
             const now = new Date();
-            const timeString = now.toLocaleTimeString('ko-KR', { 
-                hour: '2-digit', 
-                minute: '2-digit' 
+            const timeString = now.toLocaleTimeString('ko-KR', {
+                hour: '2-digit',
+                minute: '2-digit'
             });
-            
+
             messageDiv.innerHTML = `
                 <div class="message-content">${content.trim()}</div>
                 <div class="timestamp">${timeString}</div>
             `;
-            
+
             chatMessages.appendChild(messageDiv);
             chatMessages.scrollTop = chatMessages.scrollHeight;
         }
 
         function updateSessionUI(active) {
             isSessionActive = active;
-            
+
             if (active) {
                 sessionIndicator.classList.add('active');
                 messageInput.classList.add('session-active');
@@ -449,8 +498,8 @@
             }
 
             // 파일 타입 체크
-            const allowedTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 
-                                'video/mp4', 'video/quicktime', 'video/x-msvideo'];
+            const allowedTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/gif',
+                'video/mp4', 'video/quicktime', 'video/x-msvideo'];
             if (!allowedTypes.includes(file.type)) {
                 alert('지원하지 않는 파일 형식입니다.\n지원 형식: 이미지(PNG, JPG, GIF), 비디오(MP4, MOV, AVI)');
                 event.target.value = '';
@@ -466,13 +515,13 @@
 
             selectedFile = file;
             filePreview.classList.add('show');
-            
+
             // 파일 크기 표시
             const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
-            const fileSizeText = fileSizeMB < 1 
-                ? `${(file.size / 1024).toFixed(0)}KB` 
+            const fileSizeText = fileSizeMB < 1
+                ? `${(file.size / 1024).toFixed(0)}KB`
                 : `${fileSizeMB}MB`;
-            
+
             // 이미지 미리보기
             if (file.type.startsWith('image/')) {
                 const reader = new FileReader();
@@ -542,7 +591,7 @@
                 // 업로드 중 메시지 제거
                 const indicator = document.getElementById('uploadingIndicator');
                 if (indicator) indicator.remove();
-                
+
                 console.error('파일 업로드 오류:', error);
                 addMessage('❌ 파일 업로드 중 오류가 발생했습니다. 다시 시도해주세요.', 'system');
             }
@@ -557,23 +606,23 @@
 
             const message = messageInput.value.trim();
             if (!message) return;
-            
+
             addMessage(message, 'user');
             messageInput.value = '';
             sendButton.disabled = true;
-            
+
             showTypingIndicator();
-            
+
             try {
                 const response = await fetch('/api/chat', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ message: message })
                 });
-                
+
                 const data = await response.json();
                 hideTypingIndicator();
-                
+
                 if (response.ok) {
                     if (data.type === 'session_start') {
                         updateSessionUI(true);
@@ -605,20 +654,20 @@
             try {
                 const response = await fetch('/api/check_reply');
                 const data = await response.json();
-                
+
                 if (data.has_reply) {
                     const replyData = data.data;
                     const messageDiv = document.createElement('div');
                     messageDiv.className = 'message bot admin-style';
-                    
+
                     const now = new Date();
-                    const timeString = now.toLocaleTimeString('ko-KR', { 
-                        hour: '2-digit', 
-                        minute: '2-digit' 
+                    const timeString = now.toLocaleTimeString('ko-KR', {
+                        hour: '2-digit',
+                        minute: '2-digit'
                     });
-                    
+
                     let contentHtml = '';
-                    
+
                     // 텍스트 메시지
                     if (replyData.type === 'text') {
                         contentHtml = `
@@ -664,9 +713,9 @@
                             </div>
                         `;
                     }
-                    
+
                     messageDiv.innerHTML = contentHtml + `<div class="timestamp">${timeString}</div>`;
-                    
+
                     chatMessages.appendChild(messageDiv);
                     chatMessages.scrollTop = chatMessages.scrollHeight;
                 }
@@ -684,7 +733,7 @@
         });
 
         setInterval(pollAdminReply, 3000);
-        
+
         window.addEventListener('load', () => {
             fetchGreeting();
             messageInput.focus();
@@ -692,4 +741,5 @@
         });
     </script>
 </body>
+
 </html>
