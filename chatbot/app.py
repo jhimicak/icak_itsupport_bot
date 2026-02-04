@@ -609,7 +609,7 @@ def chat():
     # RAG 시스템으로 PDF 검색
     if rag_system and rag_system.tfidf_matrix is not None:
         # 원본 질문으로 검색 (대화 히스토리 제외)
-        result = rag_system.generate_answer(user_message, top_k=15, similarity_threshold=0.05)
+        result = rag_system.generate_answer(user_message, top_k=20, similarity_threshold=0.05)
         
         if result['answer'] and result['confidence'] in ['high', 'medium']:
             response_text = result['answer']

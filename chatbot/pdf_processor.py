@@ -17,8 +17,8 @@ class PDFProcessor:
     def __init__(self, chunk_size: int = 500, chunk_overlap: int = 50):
         """
         Args:
-            chunk_size: 청크당 최대 문자 수 (기본 1000자)
-            chunk_overlap: 청크 간 겹치는 문자 수 (기본 100자)
+            chunk_size: 청크당 최대 문자 수
+            chunk_overlap: 청크 간 겹치는 문자 수
         """
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap

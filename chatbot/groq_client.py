@@ -38,7 +38,7 @@ class GroqClient:
         self, 
         query: str, 
         search_results: List[Dict], 
-        model: str = "llama-3.1-8b-instant"  # 토큰 한도가 더 높은 모델로 변경
+        model: str = "llama-3.3-70b-versatile"
     ) -> Optional[str]:
         """
         검색 결과를 기반으로 정제된 답변 생성
@@ -59,7 +59,7 @@ class GroqClient:
         
         # 검색 결과를 컨텍스트로 변환
         context_parts = []
-        for i, result in enumerate(search_results[:10], 1):  # 상위 10개 사용 (토큰 절약)
+        for i, result in enumerate(search_results[:20], 1):  # 상위 20개 사용
             chunk = result['chunk']
             text = chunk['text']
             page = chunk['metadata'].get('page_number', '?')
