@@ -42,8 +42,8 @@ ALLOWED_PDF_EXTENSIONS = {'pdf'}
 FAQ_DATA = {
     '영업시간': '평일 09:00 - 18:00 (주말 및 공휴일 휴무)',
     '위치': '서울시 강남구 테헤란로 123',
-    '연락처': '02-1234-5678',
-    '이메일': 'contact@example.com',
+    '연락처': '02-3406-1111',
+    '이메일': 'hrd@icak.or.kr',
     '상담': '상담원 연결을 원하시면 "상담원"을 입력해주세요.',
     '근애': '김근애 고생많았어요',
     '현경': '켠경은 좀 더 고생해요',
@@ -609,7 +609,7 @@ def chat():
     # RAG 시스템으로 PDF 검색
     if rag_system and rag_system.tfidf_matrix is not None:
         # 원본 질문으로 검색 (대화 히스토리 제외)
-        result = rag_system.generate_answer(user_message, top_k=5, similarity_threshold=0.05)
+        result = rag_system.generate_answer(user_message, top_k=20, similarity_threshold=0.05)
         
         if result['answer'] and result['confidence'] in ['high', 'medium']:
             response_text = result['answer']

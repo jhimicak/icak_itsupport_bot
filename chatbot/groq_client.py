@@ -59,7 +59,7 @@ class GroqClient:
         
         # 검색 결과를 컨텍스트로 변환
         context_parts = []
-        for i, result in enumerate(search_results[:5], 1):  # 상위 5개 사용 (3개 → 5개)
+        for i, result in enumerate(search_results[:20], 1):  # 상위 20개 사용
             chunk = result['chunk']
             text = chunk['text']
             page = chunk['metadata'].get('page_number', '?')
