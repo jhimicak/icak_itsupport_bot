@@ -610,13 +610,14 @@ def chat():
         result = rag_system.generate_answer(user_message, top_k=3, similarity_threshold=0.1)
         
         if result['answer'] and result['confidence'] in ['high', 'medium']:
-            # 출처 정보 포맷팅
-            sources_text = ""
-            if result['sources']:
-                pages = [str(s['page']) for s in result['sources']]
-                sources_text = f"\n\n📄 출처: 페이지 {', '.join(pages)}"
+            # 출처 정보 포맷팅 (주석처리 - 필요시 활성화)
+            # sources_text = ""
+            # if result['sources']:
+            #     pages = [str(s['page']) for s in result['sources']]
+            #     sources_text = f"\n\n📄 출처: 페이지 {', '.join(pages)}"
             
-            response_text = result['answer'] + sources_text
+            # response_text = result['answer'] + sources_text
+            response_text = result['answer']  # 출처 없이 답변만 표시
             save_to_google_sheets(user_id, 'rag_answer', response_text, 'bot')
             
             return jsonify({
