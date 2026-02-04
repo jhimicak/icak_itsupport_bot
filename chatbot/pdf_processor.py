@@ -1,16 +1,18 @@
 """
-PDF 문서 처리 모듈
+문서 처리 모듈
 - PDF에서 텍스트 추출
+- TXT 파일 읽기
 - 텍스트를 의미 있는 청크로 분할
 """
 
 import pdfplumber
 import re
+import os
 from typing import List, Dict
 
 
 class PDFProcessor:
-    """PDF 문서 처리 클래스"""
+    """문서 처리 클래스 (PDF 및 TXT 지원)"""
     
     def __init__(self, chunk_size: int = 500, chunk_overlap: int = 50):
         """
@@ -50,6 +52,34 @@ class PDFProcessor:
             
         except Exception as e:
             print(f"❌ PDF 추출 실패: {e}")
+            return []
+    
+    def extract_text_from_txt(self, txt_path: str) -> List[Dict[str, any]]:
+        """
+        TXT 파일에서 텍스트 추출
+        
+        Args:
+            txt_path: TXT 파일 경로
+            
+        Returns:
+            텍스트와 메타데이터 리스트
+        """
+        try:
+            with open(txt_path, 'r', encoding='utf-8') as f:
+                text = f.read()
+            
+            if text and text.strip():
+                print(f"✅ TXT 추출 완료: {txt_path}")
+                return [{
+                    'page_number': 1,
+                    'text': text.strip(),
+                    'source': txt_path
+                }]
+            else:
+                return []
+                
+        except Exception as e:
+            print(f"❌ TXT 추출 실패: {e}")
             return []
     
     def split_text_into_chunks(self, text: str, metadata: Dict = None) -> List[Dict[str, any]]:
@@ -129,6 +159,38 @@ class PDFProcessor:
         
         print(f"✅ 총 {len(all_chunks)}개 청크 생성")
         return all_chunks
+    
+    def process_file(self, file_path: str) -> List[Dict[str, any]]:
+        """
+        파일 처리: PDF 또는 TXT 자동 감지
+        
+        Args:
+            file_path: 파일 경로
+            
+        Returns:
+            모든 청크 리스트
+        """
+        file_ext = os.path.splitext(file_path)[1].lower()
+        
+        if file_ext == '.pdf':
+            return self.process_pdf(file_path)
+        elif file_ext == '.txt':
+            all_chunks = []
+            pages_data = self.extract_text_from_txt(file_path)
+            
+            for page_data in pages_data:
+                metadata = {
+                    'page_number': page_data['page_number'],
+                    'source': page_data['source']
+                }
+                chunks = self.split_text_into_chunks(page_data['text'], metadata)
+                all_chunks.extend(chunks)
+            
+            print(f"✅ 총 {len(all_chunks)}개 청크 생성")
+            return all_chunks
+        else:
+            print(f"⚠️ 지원하지 않는 파일 형식: {file_ext}")
+            return []
 
 
 def test_pdf_processor():

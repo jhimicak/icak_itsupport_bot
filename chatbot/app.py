@@ -111,29 +111,29 @@ def init_rag_system():
             else:
                 print("⚠️ 인덱스 로드 실패, PDF 재인덱싱 시작")
         
-        # 인덱스가 없으면 PDF 폴더에서 자동 인덱싱
-        pdf_files = [f for f in os.listdir(PDF_FOLDER) if f.endswith('.pdf')]
+        # 인덱스가 없으면 PDF/TXT 폴더에서 자동 인덱싱
+        files = [f for f in os.listdir(PDF_FOLDER) if f.endswith(('.pdf', '.txt'))]
         
-        if not pdf_files:
-            print("⚠️ PDF 파일이 없습니다. pdf_documents/ 폴더에 PDF를 넣어주세요.")
+        if not files:
+            print("⚠️ PDF/TXT 파일이 없습니다. pdf_documents/ 폴더에 파일을 넣어주세요.")
             return rag_system
         
-        print(f"📄 {len(pdf_files)}개 PDF 파일 발견, 인덱싱 시작...")
+        print(f"📄 {len(files)}개 파일 발견, 인덱싱 시작...")
         all_chunks = []
         
-        for pdf_file in pdf_files:
-            pdf_path = os.path.join(PDF_FOLDER, pdf_file)
-            print(f"  처리 중: {pdf_file}")
-            chunks = pdf_processor.process_pdf(pdf_path)
+        for file in files:
+            file_path = os.path.join(PDF_FOLDER, file)
+            print(f"  처리 중: {file}")
+            chunks = pdf_processor.process_file(file_path)  # PDF와 TXT 자동 감지
             all_chunks.extend(chunks)
         
         if all_chunks:
             print(f"📊 총 {len(all_chunks)}개 청크 생성, 인덱스 빌드 중...")
             rag_system.build_index(all_chunks)
             rag_system.save_index(INDEX_FOLDER)
-            print("✅ PDF 인덱싱 완료!")
+            print("✅ 파일 인덱싱 완료!")
         else:
-            print("⚠️ PDF에서 텍스트를 추출할 수 없습니다.")
+            print("⚠️ 파일에서 텍스트를 추출할 수 없습니다.")
         
         return rag_system
         
