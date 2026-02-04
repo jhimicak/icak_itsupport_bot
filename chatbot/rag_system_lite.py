@@ -29,8 +29,8 @@ class RAGSystemLite:
         
         # TF-IDF 벡터라이저 (한국어 지원)
         self.vectorizer = TfidfVectorizer(
-            max_features=5000,  # 최대 특성 수 제한 (메모리 절약)
-            ngram_range=(1, 2),  # 1-gram, 2-gram 사용
+            max_features=10000,  # 특성 수 증가 (5000 → 10000)
+            ngram_range=(1, 3),  # 3-gram까지 확장 (더 긴 구문 매칭)
             min_df=1,
             max_df=0.95,
             sublinear_tf=True  # 로그 스케일링
