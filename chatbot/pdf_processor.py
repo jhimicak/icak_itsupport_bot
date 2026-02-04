@@ -14,11 +14,11 @@ from typing import List, Dict
 class PDFProcessor:
     """문서 처리 클래스 (PDF 및 TXT 지원)"""
     
-    def __init__(self, chunk_size: int = 500, chunk_overlap: int = 50):
+    def __init__(self, chunk_size: int = 1500, chunk_overlap: int = 150):
         """
         Args:
-            chunk_size: 청크당 최대 문자 수
-            chunk_overlap: 청크 간 겹치는 문자 수
+            chunk_size: 청크당 최대 문자 수 (기본 1500자)
+            chunk_overlap: 청크 간 겹치는 문자 수 (기본 150자)
         """
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
