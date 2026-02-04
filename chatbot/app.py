@@ -65,7 +65,7 @@ google_sheets_client = None
 
 # RAG 시스템 초기화
 rag_system = None
-pdf_processor = PDFProcessor(chunk_size=1500, chunk_overlap=150)
+pdf_processor = PDFProcessor(chunk_size=1000, chunk_overlap=100)
 
 def init_google_sheets():
     """Google Sheets API 초기화"""
