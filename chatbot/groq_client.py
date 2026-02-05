@@ -38,7 +38,7 @@ class GroqClient:
         self, 
         query: str, 
         search_results: List[Dict], 
-        model: str = "llama-3.3-70b-versatile"
+        model: str = "llama-3.1-8b-instant"
     ) -> Optional[str]:
         """
         검색 결과를 기반으로 정제된 답변 생성
